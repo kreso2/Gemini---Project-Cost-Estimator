@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CostCalc - Kalkulator Troškova Projekta</title>
+    
+    <!-- Babel for in-browser JSX transpilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Import Map for ES Modules -->
+    <script type="importmap">
+      {
+        "imports": {
+          "react": "https://esm.sh/react@18.2.0",
+          "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+          "lucide-react": "https://esm.sh/lucide-react@0.378.0"
+        }
+      }
+    </script>
+    
+    <!-- Styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --background: 0 0% 100%;
+            --foreground: 224 71.4% 4.1%;
+            --card: 0 0% 100%;
+            --card-foreground: 224 71.4% 4.1%;
+            --primary: 221.2 83.2% 53.3%; /* Business Blue */
+            --primary-foreground: 210 20% 98%;
+            --secondary: 220 14.3% 95.9%;
+            --secondary-foreground: 220.9 39.3% 11%;
+            --muted: 220 14.3% 95.9%;
+            --muted-foreground: 220 8.9% 46.1%;
+            --destructive: 0 84.2% 60.2%;
+            --destructive-foreground: 210 20% 98%;
+            --border: 220 13% 91%;
+            --input: 220 13% 91%;
+            --ring: 221.2 83.2% 53.3%;
+        }
+        .dark {
+            --background: 224 71.4% 4.1%;
+            --foreground: 210 20% 98%;
+            --card: 224 71.4% 4.1%;
+            --card-foreground: 210 20% 98%;
+            --primary: 217.2 91.2% 59.8%;
+            --primary-foreground: 210 20% 98%;
+            --secondary: 215 27.9% 16.9%;
+            --secondary-foreground: 210 20% 98%;
+            --muted: 215 27.9% 16.9%;
+            --muted-foreground: 217.9 10.6% 64.9%;
+            --destructive: 0 62.8% 30.6%;
+            --destructive-foreground: 210 20% 98%;
+            --border: 215 27.9% 16.9%;
+            --input: 215 27.9% 16.9%;
+            --ring: 217.2 91.2% 59.8%;
+        }
+        body { font-family: 'Inter', sans-serif; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel" data-type="module">
+        import React, { useState, createContext, useContext, useEffect, useMemo, useCallback } from 'react';
+        import ReactDOM from 'react-dom/client';
+        import { Sun, Moon, Menu, X, Home, FolderKanban, Shield, User, LifeBuoy, LogOut, LogIn, UserPlus, Settings, AlertCircle, Check, Plus, Trash2, Save, FileUp, CalendarDays, BarChart3, Copy, Edit, Bell, Share2, Download, ChevronLeft, ChevronRight } from 'lucide-react';
+
+        // --- MOCK DATA ---
+        const mockUsersData = [
+            { id: '1', email: 'admin@app.com', first_name: 'Global', last_name: 'Admin', role: 'global_admin' },
+            { id: '2', email: 'manager@app.com', first_name: 'Role', last_name: 'Manager', role: 'role_admin' },
+            { id: '3', email: 'user@app.com', first_name: 'Test', last_name: 'User', role: 'user' },
+        ];
+        const mockRoleCatalogData = [
+            { id: 1, role: 'Project Manager', rate: 100, is_active: true, description: 'Manages project timelines.' },
+            { id: 2, role: 'Lead Developer', rate: 120, is_active: true, description: 'Leads the development team.' },
+            { id: 3, role: 'Senior Developer', rate: 100, is_active: true, description: 'Writes complex code.' },
+            { id: 4, role: 'Junior Developer', rate: 70, is_active: false, description: 'Entry-level developer.' },
+            { id: 5, role: 'UI/UX Designer', rate: 85, is_active: true, description: 'Designs user interfaces.' },
+        ];
+        const mockProjectsData = [
+            { id: 'proj1', name: 'Website Redesign', owner_id: '1', is_template: false, last_modified: new Date().toISOString(), settings: { duration: 6, workingHours: 160, currency: 'USD' }, team: [] },
+            { id: 'proj2', name: 'Mobile App Launch', owner_id: '1', is_template: false, last_modified: new Date(Date.now() - 86400000).toISOString(), settings: { duration: 12, workingHours: 160, currency: 'EUR' }, team: [] },
+            { id: 'temp1', name: 'Standard Web Template', owner_id: '1', is_template: true, last_modified: new Date().toISOString(), settings: { duration: 4, workingHours: 160, currency: 'USD' }, team: [] },
+        ];
+        const mockNotificationsData = [
+            { id: 1, user_id: '1', text: 'Project "Mobile App Launch" has been shared with you.', read: false, created_at: new Date().toISOString() },
+        ];
+        const DEFAULT_RATES = { 'USD': 1.0, 'EUR': 0.92, 'GBP': 0.79 };
+
+        // --- CONTEXTS ---
+        const AuthContext = createContext(null);
+        const AuthProvider = ({ children }) => {
+            const [user, setUser] = useState(null);
+            const [profile, setProfile] = useState(null);
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                setTimeout(() => {
+                    const loggedInUser = mockUsersData[0]; // Default to global admin
+                    setUser({ id: loggedInUser.id, email: loggedInUser.email });
+                    setProfile(loggedInUser);
+                    setLoading(false);
+                }, 500);
+            }, []);
+            
+            const signIn = async ({ email }) => {
+                setLoading(true);
+                const foundUser = mockUsersData.find(u => u.email === email);
+                if (foundUser) { setUser({id: foundUser.id, email: foundUser.email}); setProfile(foundUser); setLoading(false); return { error: null }; }
+                setLoading(false);
+                return { error: { message: "Invalid credentials" } };
+            };
+            
+            const signOut = async () => { setUser(null); setProfile(null); };
+
+            const value = { user, profile, loading, signIn, signUp: signIn, signOut };
+            return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+        };
+        const useAuth = () => useContext(AuthContext);
+
+        const ThemeContext = createContext(null);
+        const ThemeProvider = ({ children }) => {
+            const [theme, setTheme] = useState('light');
+            useEffect(() => { const storedTheme = localStorage.getItem('theme') || 'light'; setTheme(storedTheme); document.documentElement.classList.toggle('dark', storedTheme === 'dark'); }, []);
+            const toggleTheme = () => { const newTheme = theme === 'light' ? 'dark' : 'light'; setTheme(newTheme); localStorage.setItem('theme', newTheme); document.documentElement.classList.toggle('dark', newTheme === 'dark'); };
+            return <ThemeContext.Provider value={{ theme, toggleTheme }}>{children}</ThemeContext.Provider>;
+        };
+        const useTheme = () => useContext(ThemeContext);
+        
+        const ToastContext = createContext(null);
+        const ToastProvider = ({ children }) => {
+            const [toasts, setToasts] = useState([]);
+            const addToast = useCallback((content, type = 'info') => { const id = Date.now(); setToasts(ts => [...ts, { id, content, type }]); setTimeout(() => setToasts(ts => ts.filter(t => t.id !== id)), 5000); }, []);
+            return <ToastContext.Provider value={{ addToast }}>{children}<ToastContainer toasts={toasts} /></ToastContext.Provider>;
+        };
+        const useToast = () => useContext(ToastContext);
+
+        // --- UI COMPONENTS ---
+        const Card = ({ children, className = '' }) => <div className={`bg-card text-card-foreground border border-border rounded-xl shadow-sm p-4 sm:p-6 ${className}`}>{children}</div>;
+        const Button = ({ children, onClick, variant = 'primary', className = '', type = 'button', disabled = false }) => { const base = 'px-4 h-10 rounded-md font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 transition-colors inline-flex items-center justify-center gap-2 disabled:opacity-50 disabled:pointer-events-none'; const variants = { primary: 'bg-primary text-primary-foreground hover:bg-primary/90', secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/80', danger: 'bg-destructive text-destructive-foreground hover:bg-destructive/90', ghost: 'hover:bg-accent hover:text-accent-foreground' }; return <button onClick={onClick} type={type} className={`${base} ${variants[variant]} ${className}`} disabled={disabled}>{children}</button>; };
+        const Input = React.forwardRef(({ id, type, placeholder, className = '', ...props }, ref) => <input id={id} type={type} placeholder={placeholder} ref={ref} className={`w-full h-10 px-3 py-2 bg-background border border-input rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${className}`} {...props} />);
+        const Select = React.forwardRef(({ id, children, className = '', ...props }, ref) => <select id={id} ref={ref} className={`w-full h-10 px-3 py-2 bg-background border border-input rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring appearance-none ${className}`} {...props}>{children}</select>);
+        const Textarea = React.forwardRef(({ id, placeholder, className = '', ...props }, ref) => <textarea id={id} placeholder={placeholder} ref={ref} className={`w-full p-3 bg-background border border-input rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${className}`} {...props} />);
+        const PageWrapper = ({ title, children }) => <div className="p-4 sm:p-6"><h2 className="text-2xl sm:text-3xl font-bold mb-6">{title}</h2>{children}</div>;
+        const Toast = ({ content, type }) => { const icons = { info: <Check size={20}/>, error: <AlertCircle size={20}/> }; return ( <div className={`flex items-center gap-4 p-4 w-full max-w-sm rounded-lg shadow-lg border ${type === 'error' ? 'bg-destructive/10 border-destructive/50 text-destructive-foreground' : 'bg-secondary/80 border-border text-secondary-foreground'} backdrop-blur-sm`}> {icons[type]} <p className="font-medium">{content}</p> </div> ); };
+        const ToastContainer = ({ toasts }) => <div className="fixed bottom-0 right-0 p-4 sm:p-6 space-y-4 z-[100]">{toasts.map(toast => <Toast key={toast.id} {...toast} />)}</div>;
+        const Modal = ({ isOpen, onClose, title, children }) => {
+            if (!isOpen) return null;
+            return (
+                <div className="fixed inset-0 bg-black/70 z-50 flex justify-center items-center p-4" onClick={onClose}>
+                    <div className="bg-card text-card-foreground rounded-lg shadow-2xl w-full max-w-2xl border border-border" onClick={e => e.stopPropagation()}>
+                        <div className="flex justify-between items-center p-4 border-b border-border"><h3 className="text-xl font-semibold">{title}</h3><button onClick={onClose} className="p-2 rounded-full hover:bg-accent"><X size={20} /></button></div>
+                        <div className="p-6 max-h-[70vh] overflow-y-auto">{children}</div>
+                    </div>
+                </div>
+            );
+        };
+        
+        // --- LAYOUT COMPONENTS ---
+        const Sidebar = ({ isSidebarOpen, setSidebarOpen, setCurrentPage }) => {
+            const { profile } = useAuth();
+            const navItems = [ { name: 'Home', icon: Home, page: 'home' }, { name: 'Projects', icon: FolderKanban, page: 'projects' }, { name: 'Admin', icon: Shield, page: 'admin', roles: ['global_admin', 'role_admin'] }, { name: 'Profile', icon: User, page: 'profile' }, { name: 'Help', icon: LifeBuoy, page: 'help' }, ];
+            const handleNavClick = (page) => { setCurrentPage(page); if (window.innerWidth < 768) setSidebarOpen(false); };
+            const asideClass = `fixed top-0 left-0 h-full w-64 bg-card border-r border-border z-40 transition-transform duration-300 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`;
+            return (<>
+                {isSidebarOpen && <div className="fixed inset-0 bg-black/60 z-30 md:hidden" onClick={() => setSidebarOpen(false)}></div>}
+                <aside className={asideClass}>
+                    <div className="flex items-center justify-between h-16 px-6 border-b border-border"><h1 className="text-xl font-bold text-primary">CostCalc</h1><button onClick={() => setSidebarOpen(false)} className="md:hidden text-foreground/70"><X size={24} /></button></div>
+                    <nav className="flex-grow p-4"><ul>{navItems.map(item => { if (item.roles && !item.roles.includes(profile?.role)) return null; return (<li key={item.name}><a href="#" onClick={(e) => { e.preventDefault(); handleNavClick(item.page); }} className="flex items-center px-4 py-3 text-foreground/80 hover:bg-accent hover:text-accent-foreground rounded-lg transition-colors"><item.icon size={20} className="mr-3" /><span>{item.name}</span></a></li>); })}</ul></nav>
+                </aside>
+            </>);
+        };
+        const Header = ({ setSidebarOpen }) => {
+            const { theme, toggleTheme } = useTheme(); const { user, profile, signOut } = useAuth();
+            const [notifications, setNotifications] = useState(mockNotificationsData);
+            const [isNotifOpen, setIsNotifOpen] = useState(false);
+            const unreadCount = notifications.filter(n => !n.read).length;
+            const handleMarkAsRead = (notifId) => setNotifications(notifications.map(n => n.id === notifId ? {...n, read: true} : n));
+            
+            return (
+                <header className="flex items-center justify-between h-16 px-4 sm:px-6 bg-background/80 backdrop-blur-sm border-b border-border sticky top-0 z-20">
+                    <button onClick={() => setSidebarOpen(true)} className="md:hidden text-foreground/70"><Menu size={24} /></button>
+                    <div className="hidden md:block"></div>
+                    <div className="flex items-center space-x-2 sm:space-x-4">
+                        <Button variant="ghost" onClick={toggleTheme} className="p-2 h-10 w-10"><Moon size={20} className="hidden dark:block"/><Sun size={20} className="dark:hidden"/></Button>
+                        <div className="relative">
+                            <Button variant="ghost" onClick={() => setIsNotifOpen(!isNotifOpen)} className="p-2 h-10 w-10 relative"><Bell size={20} />{unreadCount > 0 && <span className="absolute top-1.5 right-1.5 block h-2 w-2 rounded-full bg-primary ring-2 ring-background"></span>}</Button>
+                            {isNotifOpen && <div className="absolute right-0 mt-2 w-80 bg-card rounded-lg shadow-xl border border-border z-50"><div className="p-3 font-semibold border-b border-border">Notifications</div><div className="max-h-96 overflow-y-auto">{notifications.map(n => (<div key={n.id} className={`p-3 border-b border-border/50 ${!n.read ? 'bg-primary/10' : ''}`}><p className="text-sm">{n.text}</p><div className="flex justify-between items-center mt-1"><span className="text-xs text-muted-foreground">{new Date(n.created_at).toLocaleString()}</span>{!n.read && <button onClick={() => handleMarkAsRead(n.id)} className="text-xs text-primary hover:underline">Mark as read</button>}</div></div>))}{notifications.length === 0 && <p className="text-center text-sm text-muted-foreground py-4">No new notifications.</p>}</div></div>}
+                        </div>
+                        {profile && (<div className="flex items-center space-x-2"><div className="text-right hidden sm:block"><p className="font-semibold text-sm">{profile.first_name || 'User'}</p><p className="text-xs text-muted-foreground">{user.email}</p></div><Button variant="ghost" onClick={signOut} title="Sign Out" className="p-2 h-10 w-10"><LogOut size={20} /></Button></div>)}
+                    </div>
+                </header>
+            );
+        };
+
+        // --- PAGE COMPONENTS (Defined before App component) ---
+        
+        const HomePage = ({ projectToLoad, clearProjectToLoad }) => {
+            const { addToast } = useToast();
+            const [settings, setSettings] = useState({ duration: 12, workingHours: 160, currency: 'USD' });
+            const [team, setTeam] = useState([]);
+            const [projectName, setProjectName] = useState('New Project');
+
+            useEffect(() => {
+                if (projectToLoad) {
+                    setProjectName(projectToLoad.name);
+                    setSettings(projectToLoad.settings);
+                    setTeam(projectToLoad.team);
+                    addToast(`Loaded project: ${projectToLoad.name}`, 'info');
+                    clearProjectToLoad();
+                }
+            }, [projectToLoad, clearProjectToLoad, addToast]);
+
+            const handleSettingsChange = (key, value) => {
+                const newSettings = { ...settings, [key]: value };
+                if (key === 'duration') {
+                    const newTeam = team.map(member => ({ ...member, monthlyAllocation: Array(parseInt(value, 10) || 1).fill(100) }));
+                    setTeam(newTeam);
+                }
+                setSettings(newSettings);
+            };
+
+            const handleTeamChange = (newTeam) => setTeam(newTeam);
+            const handleSave = () => addToast('Project saved!', 'info');
+
+            return (
+                <PageWrapper title="Project Cost Calculator">
+                    <div className="space-y-6">
+                        <Card>
+                            <div className="flex flex-wrap gap-4 items-center">
+                                <div className="flex-grow">
+                                    <label htmlFor="projectName" className="block text-sm font-medium text-muted-foreground mb-1">Project Name</label>
+                                    <Input id="projectName" type="text" value={projectName} onChange={e => setProjectName(e.target.value)} />
+                                </div>
+                                <div className="flex flex-wrap gap-2 pt-6">
+                                    <Button onClick={handleSave} variant="primary"><Save size={16}/> Save</Button>
+                                </div>
+                            </div>
+                        </Card>
+                        <ProjectSettings settings={settings} onSettingsChange={handleSettingsChange} rates={DEFAULT_RATES} />
+                        <TeamManagement team={team} onTeamChange={handleTeamChange} settings={settings} roleCatalog={mockRoleCatalogData} />
+                        <CalculationSummary team={team} settings={settings} rates={DEFAULT_RATES} />
+                    </div>
+                </PageWrapper>
+            );
+        };
+
+        const ProjectsPage = ({ loadProject }) => {
+            const [projects, setProjects] = useState(mockProjectsData);
+            return (
+                 <PageWrapper title="My Projects">
+                    <Card>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm text-left">
+                                <thead className="text-xs text-muted-foreground uppercase bg-secondary">
+                                    <tr>
+                                        <th className="px-6 py-3">Project Name</th>
+                                        <th className="px-6 py-3">Last Modified</th>
+                                        <th className="px-6 py-3">Type</th>
+                                        <th className="px-6 py-3">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {projects.map(project => (
+                                        <tr key={project.id} className="border-b dark:border-border">
+                                            <td className="px-6 py-4 font-medium">{project.name}</td>
+                                            <td className="px-6 py-4">{new Date(project.last_modified).toLocaleString()}</td>
+                                            <td className="px-6 py-4">{project.is_template ? 'Template' : 'Project'}</td>
+                                            <td className="px-6 py-4 flex gap-2">
+                                                <Button variant="secondary" onClick={() => loadProject(project)}>Load</Button>
+                                                <Button variant="ghost"><Share2 size={16}/></Button>
+                                                <Button variant="ghost" className="text-destructive hover:bg-destructive/10"><Trash2 size={16}/></Button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </Card>
+                 </PageWrapper>
+            );
+        };
+        const AdminPage = () => <PageWrapper title="Admin Dashboard"><Card><p className="text-muted-foreground">This area will be for user and role management, accessible only to admins.</p></Card></PageWrapper>;
+        const ProfilePage = () => <PageWrapper title="My Profile"><Card><p className="text-muted-foreground">Users will be able to manage their profile information here.</p></Card></PageWrapper>;
+        const HelpPage = () => <PageWrapper title="Help"><Card><p className="text-muted-foreground">This section will contain helpful guides and FAQs.</p></Card></PageWrapper>;
+        
+        const AuthPage = () => {
+            const { signIn } = useAuth(); 
+            const { addToast } = useToast();
+            const [email, setEmail] = useState(''); 
+            const [password, setPassword] = useState(''); 
+            const [loading, setLoading] = useState(false);
+            
+            const handleAuth = async (e) => {
+                e.preventDefault(); 
+                setLoading(true);
+                const { error } = await signIn({ email, password });
+                if (error) { addToast(error.message, 'error'); } 
+                else { addToast('Uspješna prijava!', 'info'); }
+                setLoading(false);
+            };
+            return (<div className="flex flex-col justify-center items-center min-h-screen bg-background p-4"><div className="w-full max-w-sm"><div className="text-center mb-6"><h1 className="text-3xl font-bold text-primary">CostCalc</h1><p className="text-muted-foreground">Sign in to your account</p></div><Card><form onSubmit={handleAuth} className="space-y-4"><div><label className="text-sm font-medium">Email</label><Input type="email" value={email} onChange={e => setEmail(e.target.value)} required placeholder="admin@app.com"/></div><div><label className="text-sm font-medium">Password</label><Input type="password" value={password} onChange={e => setPassword(e.target.value)} required placeholder="any password"/></div><Button type="submit" variant="primary" className="w-full" disabled={loading}>{loading ? 'Processing...' : 'Sign In'}</Button></form></Card></div></div>);
+        };
+        
+        // --- CALCULATOR SUB-COMPONENTS ---
+        const ProjectSettings = ({ settings, onSettingsChange, rates }) => (
+            <Card>
+                <h3 className="text-lg font-semibold mb-4">Project Settings</h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label htmlFor="duration" className="block text-sm font-medium text-muted-foreground mb-1">Duration (Months)</label>
+                        <Input id="duration" type="number" value={settings.duration} onChange={e => onSettingsChange('duration', parseInt(e.target.value) || 1)} min="1" />
+                    </div>
+                    <div>
+                        <label htmlFor="workingHours" className="block text-sm font-medium text-muted-foreground mb-1">Monthly Hours</label>
+                        <Input id="workingHours" type="number" value={settings.workingHours} onChange={e => onSettingsChange('workingHours', parseInt(e.target.value) || 0)} />
+                    </div>
+                    <div>
+                        <label htmlFor="currency" className="block text-sm font-medium text-muted-foreground mb-1">Target Currency</label>
+                        <Select id="currency" value={settings.currency} onChange={e => onSettingsChange('currency', e.target.value)}>
+                            {Object.keys(rates).map(c => <option key={c} value={c}>{c}</option>)}
+                        </Select>
+                    </div>
+                </div>
+            </Card>
+        );
+
+        const TeamManagement = ({ team, onTeamChange, settings, roleCatalog }) => {
+            const [isMultiRoleModalOpen, setIsMultiRoleModalOpen] = useState(false);
+            const [isMonthlyPlanModalOpen, setIsMonthlyPlanModalOpen] = useState(false);
+            const [planningMember, setPlanningMember] = useState(null);
+
+            const handleAddRoles = (roles) => {
+                const newMembers = roles.map(role => ({ id: `${role.id}-${Date.now()}`, role: role.role, costRate: role.rate, billRate: role.rate * 1.5, monthlyAllocation: Array(settings.duration).fill(100) }));
+                onTeamChange([...team, ...newMembers]);
+            };
+            
+            const handleRemoveMember = (id) => onTeamChange(team.filter(m => m.id !== id));
+            const openMonthlyPlan = (member) => { setPlanningMember(member); setIsMonthlyPlanModalOpen(true); };
+            const handleSaveMonthlyPlan = (memberId, newAllocations) => { onTeamChange(team.map(m => m.id === memberId ? { ...m, monthlyAllocation: newAllocations } : m)); };
+            const getAverageAllocation = (allocations) => { if (!allocations || allocations.length === 0) return 0; const sum = allocations.reduce((a, b) => a + b, 0); return (sum / allocations.length).toFixed(0); }
+
+            return (
+                <Card>
+                    <div className="flex justify-between items-center mb-4"><h3 className="text-lg font-semibold">Team Members</h3><Button onClick={() => setIsMultiRoleModalOpen(true)}><Plus size={16}/> Add from Catalog</Button></div>
+                    <div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead className="text-xs text-muted-foreground uppercase bg-secondary"><tr><th className="px-6 py-3">Role</th><th className="px-6 py-3">Cost/hr</th><th className="px-6 py-3">Bill/hr</th><th className="px-6 py-3">Avg. Allocation</th><th className="px-6 py-3">Actions</th></tr></thead><tbody>{team.map(member => (<tr key={member.id} className="border-b dark:border-border"><td className="px-6 py-4 font-medium">{member.role}</td><td className="px-6 py-4">${parseFloat(member.costRate).toFixed(2)}</td><td className="px-6 py-4">${parseFloat(member.billRate).toFixed(2)}</td><td className="px-6 py-4">{getAverageAllocation(member.monthlyAllocation)}%</td><td className="px-6 py-4 flex gap-2"><Button variant="secondary" onClick={() => openMonthlyPlan(member)}><CalendarDays size={16}/> Plan</Button><Button variant="ghost" onClick={() => handleRemoveMember(member.id)} className="text-destructive hover:bg-destructive/10 p-2 h-auto"><Trash2 size={16}/></Button></td></tr>))}{team.length === 0 && (<tr><td colSpan="5" className="text-center py-8 text-muted-foreground">No team members added yet.</td></tr>)}</tbody></table></div>
+                    <MultiRoleSelectionModal isOpen={isMultiRoleModalOpen} onClose={() => setIsMultiRoleModalOpen(false)} onAddRoles={handleAddRoles} roleCatalog={roleCatalog} />
+                    {planningMember && <MonthlyPlanningModal isOpen={isMonthlyPlanModalOpen} onClose={() => setIsMonthlyPlanModalOpen(false)} member={planningMember} duration={settings.duration} onSave={handleSaveMonthlyPlan} />}
+                </Card>
+            );
+        };
+
+        const CalculationSummary = ({ team, settings, rates }) => {
+            const { totalCost, totalBilling, grossMargin, blendedRate } = useMemo(() => {
+                const conversionRate = rates[settings.currency] || 1;
+                let totalCost = 0, totalBilling = 0, totalHours = 0;
+                team.forEach(member => {
+                    for (let i = 0; i < settings.duration; i++) {
+                        const allocation = (member.monthlyAllocation?.[i] || 100) / 100;
+                        const monthlyHours = settings.workingHours * allocation;
+                        totalHours += monthlyHours;
+                        totalCost += monthlyHours * parseFloat(member.costRate);
+                        totalBilling += monthlyHours * parseFloat(member.billRate);
+                    }
+                });
+                const grossMargin = totalBilling > 0 ? ((totalBilling - totalCost) / totalBilling) * 100 : 0;
+                const blendedRate = totalHours > 0 ? totalBilling / totalHours : 0;
+                return { totalCost: totalCost * conversionRate, totalBilling: totalBilling * conversionRate, grossMargin, blendedRate: blendedRate * conversionRate };
+            }, [team, settings, rates]);
+            
+            const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: settings.currency }).format(amount);
+
+            return (
+                <Card>
+                     <h3 className="text-lg font-semibold mb-4">Project Summary</h3>
+                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                        <div className="p-4 bg-secondary rounded-lg"><h4 className="text-sm font-medium text-muted-foreground">Total Cost</h4><p className="text-2xl font-bold text-destructive">{formatCurrency(totalCost)}</p></div>
+                        <div className="p-4 bg-secondary rounded-lg"><h4 className="text-sm font-medium text-muted-foreground">Total Billing</h4><p className="text-2xl font-bold text-green-600">{formatCurrency(totalBilling)}</p></div>
+                        <div className="p-4 bg-secondary rounded-lg"><h4 className="text-sm font-medium text-muted-foreground">Gross Margin</h4><p className="text-2xl font-bold text-primary">{grossMargin.toFixed(1)}%</p></div>
+                        <div className="p-4 bg-secondary rounded-lg"><h4 className="text-sm font-medium text-muted-foreground">Blended Bill Rate</h4><p className="text-2xl font-bold">{formatCurrency(blendedRate)}/hr</p></div>
+                     </div>
+                </Card>
+            )
+        };
+        
+        const MonthlyPlanningModal = ({ isOpen, onClose, member, duration, onSave }) => {
+            const [monthlyAllocation, setMonthlyAllocation] = useState(member.monthlyAllocation || Array(duration).fill(100));
+            useEffect(() => { if (monthlyAllocation.length !== duration) { const newAllocation = Array(duration).fill(100); for(let i = 0; i < Math.min(monthlyAllocation.length, duration); i++) { newAllocation[i] = monthlyAllocation[i]; } setMonthlyAllocation(newAllocation); } }, [duration, monthlyAllocation]);
+            const handleAllocationChange = (index, value) => { const newAllocations = [...monthlyAllocation]; newAllocations[index] = parseInt(value, 10) || 0; setMonthlyAllocation(newAllocations); };
+            const handleSave = () => { onSave(member.id, monthlyAllocation); onClose(); };
+            return (<Modal isOpen={isOpen} onClose={onClose} title={`Monthly Plan: ${member.role}`}><div className="space-y-4"><p className="text-muted-foreground">Set the allocation percentage for each month of the project.</p><div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">{monthlyAllocation.map((alloc, index) => (<div key={index}><label className="block text-sm font-medium mb-1">Month {index + 1}</label><Input type="number" value={alloc} onChange={e => handleAllocationChange(index, e.target.value)} min="0" max="100" /></div>))}</div><div className="flex justify-end gap-4 pt-4"><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant="primary" onClick={handleSave}>Save Plan</Button></div></div></Modal>);
+        };
+
+        const MultiRoleSelectionModal = ({ isOpen, onClose, onAddRoles, roleCatalog }) => {
+            const [selectedRoles, setSelectedRoles] = useState({});
+            const handleToggleRole = (role) => { setSelectedRoles(prev => { const newSelection = {...prev}; if (newSelection[role.id]) delete newSelection[role.id]; else newSelection[role.id] = role; return newSelection; }); };
+            const handleAdd = () => { onAddRoles(Object.values(selectedRoles)); onClose(); };
+            return (<Modal isOpen={isOpen} onClose={onClose} title="Add Roles from Catalog"><div className="space-y-4"><p className="text-muted-foreground">Select one or more roles to add to your project team.</p><div className="space-y-2 max-h-64 overflow-y-auto p-1">{roleCatalog.map(role => (<label key={role.id} className="flex items-center gap-3 p-3 rounded-lg hover:bg-accent transition-colors cursor-pointer"><input type="checkbox" checked={!!selectedRoles[role.id]} onChange={() => handleToggleRole(role)} className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"/><span className="font-medium flex-grow">{role.role}</span><span className="text-muted-foreground">${role.rate}/hr</span></label>))}</div><div className="flex justify-end gap-4 pt-4"><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant="primary" onClick={handleAdd} disabled={Object.keys(selectedRoles).length === 0}>Add {Object.keys(selectedRoles).length} Role(s)</Button></div></div></Modal>);
+        };
+
+        // --- ROOT APP COMPONENT ---
+        const App = () => {
+            const { user, profile, loading } = useAuth();
+            const [isSidebarOpen, setSidebarOpen] = useState(false);
+            const [currentPage, setCurrentPage] = useState('home');
+            const [projectToLoad, setProjectToLoad] = useState(null);
+
+            const handleLoadProject = (project) => {
+                setProjectToLoad(project);
+                setCurrentPage('home');
+            };
+            
+            const renderPage = () => {
+                switch (currentPage) {
+                    case 'home': return <HomePage projectToLoad={projectToLoad} clearProjectToLoad={() => setProjectToLoad(null)} />;
+                    case 'projects': return <ProjectsPage loadProject={handleLoadProject} />;
+                    case 'admin': return <AdminPage />;
+                    case 'profile': return <ProfilePage />;
+                    case 'help': return <HelpPage />;
+                    default: return <HomePage />;
+                }
+            };
+
+            if (loading) return <div className="flex items-center justify-center h-screen bg-background"><div className="text-xl font-semibold text-foreground/80">Loading...</div></div>;
+            
+            if (!user) return <AuthPage />;
+
+            return (
+                <div className="flex h-screen bg-background text-foreground">
+                    <Sidebar isSidebarOpen={isSidebarOpen} setSidebarOpen={setSidebarOpen} setCurrentPage={setCurrentPage} />
+                    <div className="flex-1 flex flex-col overflow-hidden md:ml-64">
+                        <Header setSidebarOpen={setSidebarOpen} />
+                        <main className="flex-1 overflow-x-hidden overflow-y-auto">
+                           {renderPage()}
+                        </main>
+                    </div>
+                </div>
+            );
+        };
+
+        ReactDOM.createRoot(document.getElementById('root')).render(
+            <React.StrictMode>
+                <ThemeProvider>
+                    <ToastProvider>
+                        <AuthProvider>
+                            <App />
+                        </AuthProvider>
+                    </ToastProvider>
+                </ThemeProvider>
+            </React.StrictMode>
+        );
+    </script>
+</body>
+</html>

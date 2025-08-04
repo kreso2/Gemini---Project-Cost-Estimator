@@ -15,7 +15,9 @@
           "react": "https://esm.sh/react@18.2.0",
           "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
           "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2",
-          "lucide-react": "https://esm.sh/lucide-react@0.378.0"
+          "lucide-react": "https://esm.sh/lucide-react@0.378.0",
+          "jspdf": "https://esm.sh/jspdf@2.5.1",
+          "jspdf-autotable": "https://esm.sh/jspdf-autotable@3.8.2"
         }
       }
     </script>
@@ -26,44 +28,8 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        :root {
-            --background: 222 47% 11%;
-            --foreground: 210 40% 98%;
-            --card: 222 47% 14%;
-            --card-foreground: 210 40% 98%;
-            --primary: 217 91% 60%;
-            --primary-foreground: 210 40% 98%;
-            --secondary: 217 33% 17%;
-            --secondary-foreground: 210 40% 98%;
-            --muted: 217 33% 17%;
-            --muted-foreground: 215 20% 65%;
-            --destructive: 0 63% 31%;
-            --destructive-foreground: 210 40% 98%;
-            --border: 217 33% 22%;
-            --input: 217 33% 22%;
-            --ring: 217 91% 60%;
-        }
-        .light {
-            --background: 0 0% 100%;
-            --foreground: 224 71.4% 4.1%;
-            --card: 0 0% 100%;
-            --card-foreground: 224 71.4% 4.1%;
-            --primary: 221.2 83.2% 53.3%;
-            --primary-foreground: 210 20% 98%;
-            --secondary: 220 14.3% 95.9%;
-            --secondary-foreground: 220.9 39.3% 11%;
-            --muted: 220 14.3% 95.9%;
-            --muted-foreground: 220 8.9% 46.1%;
-            --destructive: 0 84.2% 60.2%;
-            --destructive-foreground: 210 20% 98%;
-            --border: 220 13% 91%;
-            --input: 220 13% 91%;
-            --ring: 221.2 83.2% 53.3%;
-        }
         body { 
             font-family: 'Inter', sans-serif;
-            background-color: hsl(var(--background));
-            color: hsl(var(--foreground));
         }
         @media print {
             body * { visibility: hidden; }
@@ -80,6 +46,8 @@
         import ReactDOM from 'react-dom/client';
         import { createClient } from '@supabase/supabase-js';
         import { Sun, Moon, Menu, X, Home, FolderKanban, Shield, User, LifeBuoy, LogOut, LogIn, UserPlus, Settings, AlertCircle, Check, Plus, Trash2, Save, FileUp, CalendarDays, BarChart3, Copy, Edit, Bell, Share2, Download, ChevronLeft, ChevronRight, MessageSquare, Mail, Users, BookUser, FileClock, Search, ChevronsUpDown, MoreHorizontal, FileText, DollarSign } from 'lucide-react';
+        import jsPDF from 'jspdf';
+        import autoTable from 'jspdf-autotable';
 
         // --- Supabase & API Configuration ---
         const supabaseUrl = 'https://quzmyeiyjdrluuopbbwa.supabase.co';
@@ -87,7 +55,7 @@
         const isSupabaseConfigured = supabaseUrl !== 'YOUR_SUPABASE_URL' && supabaseAnonKey !== 'YOUR_SUPABASE_ANON_KEY';
         const supabase = isSupabaseConfigured ? createClient(supabaseUrl, supabaseAnonKey) : null;
         
-        const DEFAULT_RATES = { 'USD': 1.0, 'EUR': 0.92, 'GBP': 0.79 };
+        const SUPPORTED_CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'CHF', 'CNY'];
 
         // --- CONTEXTS ---
         const AuthContext = createContext(null);
@@ -122,16 +90,35 @@
             }, []);
 
             useEffect(() => {
-                if (!supabase) { setLoading(false); return; }
+                if (!supabase) {
+                    setLoading(false);
+                    return;
+                }
+
                 const getInitialSession = async () => {
-                    const { data: { session } } = await supabase.auth.getSession();
+                    try {
+                        const { data: { session } } = await supabase.auth.getSession();
+                        await loadUserAndProfile(session);
+                    } catch (error) {
+                        console.error("Error initializing session:", error);
+                    } finally {
+                        setLoading(false);
+                    }
+                };
+
+                getInitialSession();
+
+                const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, session) => {
+                    setLoading(true);
                     await loadUserAndProfile(session);
                     setLoading(false);
+                });
+
+                return () => {
+                    authListener?.subscription.unsubscribe();
                 };
-                getInitialSession();
-                const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, session) => { setLoading(true); await loadUserAndProfile(session); setLoading(false); });
-                return () => authListener?.subscription.unsubscribe();
             }, [loadUserAndProfile]);
+
 
             const value = { user, profile, loading, signIn: (d) => supabase.auth.signInWithPassword(d), signUp: (d) => supabase.auth.signUp(d), signOut: () => supabase.auth.signOut(), refreshProfile: () => loadUserAndProfile({user}) };
             return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -166,37 +153,55 @@
         const useToast = () => useContext(ToastContext);
 
         // --- UI COMPONENTS ---
-        const Card = ({ children, className = '', id = '' }) => <div id={id} className={`bg-card text-card-foreground border border-border rounded-xl shadow-lg p-4 sm:p-6 ${className}`}>{children}</div>;
-        const Button = ({ children, onClick, variant = 'primary', className = '', type = 'button', disabled = false }) => { const base = 'px-4 h-10 rounded-md font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 transition-colors inline-flex items-center justify-center gap-2 disabled:opacity-50 disabled:pointer-events-none'; const variants = { primary: 'bg-primary text-primary-foreground hover:bg-primary/90', secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/80', danger: 'bg-destructive text-destructive-foreground hover:bg-destructive/90', ghost: 'hover:bg-accent hover:text-accent-foreground' }; return <button onClick={onClick} type={type} className={`${base} ${variants[variant]} ${className}`} disabled={disabled}>{children}</button>; };
-        const Input = React.forwardRef(({ id, type, placeholder, className = '', ...props }, ref) => <input id={id} type={type} placeholder={placeholder} ref={ref} className={`w-full h-10 px-3 py-2 bg-background border border-input rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${className}`} {...props} />);
-        const Select = React.forwardRef(({ id, children, className = '', ...props }, ref) => <select id={id} ref={ref} className={`w-full h-10 px-3 py-2 bg-background border border-input rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring appearance-none ${className}`} {...props}>{children}</select>);
-        const Textarea = React.forwardRef(({ id, placeholder, className = '', ...props }, ref) => <textarea id={id} placeholder={placeholder} ref={ref} className={`w-full p-3 bg-background border border-input rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${className}`} {...props} />);
-        const PageWrapper = ({ title, children, id }) => <div id={id} className="p-4 sm:p-6"><h2 className="text-2xl sm:text-3xl font-bold mb-6 text-foreground">{title}</h2>{children}</div>;
-        const Toast = ({ content, type }) => { const icons = { info: <Check size={20}/>, error: <AlertCircle size={20}/> }; return ( <div className={`flex items-center gap-4 p-4 w-full max-w-sm rounded-lg shadow-lg border ${type === 'error' ? 'bg-destructive/10 border-destructive/50 text-destructive-foreground' : 'bg-secondary/80 border-border text-secondary-foreground'} backdrop-blur-sm`}> {icons[type]} <p className="font-medium">{content}</p> </div> ); };
+        const Card = ({ children, className = '', id = '' }) => <div id={id} className={`bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg p-4 sm:p-6 ${className}`}>{children}</div>;
+        const Button = ({ children, onClick, variant = 'primary', className = '', type = 'button', disabled = false }) => { const base = 'px-4 h-10 rounded-md font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 transition-colors inline-flex items-center justify-center gap-2 disabled:opacity-50 disabled:pointer-events-none'; const variants = { primary: 'bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600', secondary: 'bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600', danger: 'bg-red-600 text-white hover:bg-red-700', ghost: 'hover:bg-gray-100 dark:hover:bg-gray-700' }; return <button onClick={onClick} type={type} className={`${base} ${variants[variant]} ${className}`} disabled={disabled}>{children}</button>; };
+        const Input = React.forwardRef(({ id, type, placeholder, className = '', ...props }, ref) => <input id={id} type={type} placeholder={placeholder} ref={ref} className={`w-full h-10 px-3 py-2 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 border border-gray-300 dark:border-gray-600 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${className}`} {...props} />);
+        const Select = React.forwardRef(({ id, children, className = '', ...props }, ref) => <select id={id} ref={ref} className={`w-full h-10 px-3 py-2 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 border border-gray-300 dark:border-gray-600 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 appearance-none ${className}`} {...props}>{children}</select>);
+        const Textarea = React.forwardRef(({ id, placeholder, className = '', ...props }, ref) => <textarea id={id} placeholder={placeholder} ref={ref} className={`w-full p-3 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 border border-gray-300 dark:border-gray-600 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${className}`} {...props} />);
+        const PageWrapper = ({ title, children, id, actions }) => (
+            <div id={id} className="p-4 sm:p-6">
+                <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-2xl sm:text-3xl font-bold">{title}</h2>
+                    {actions && <div className="flex gap-2">{actions}</div>}
+                </div>
+                {children}
+            </div>
+        );
+        const Toast = ({ content, type }) => { const icons = { info: <Check size={20}/>, error: <AlertCircle size={20}/> }; return ( <div className={`flex items-center gap-4 p-4 w-full max-w-sm rounded-lg shadow-lg border ${type === 'error' ? 'bg-red-100 border-red-200 text-red-800' : 'bg-gray-100 border-gray-200 text-gray-800'} dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200`}> {icons[type]} <p className="font-medium">{content}</p> </div> ); };
         const ToastContainer = ({ toasts }) => <div className="fixed bottom-0 right-0 p-4 sm:p-6 space-y-4 z-[100] no-print">{toasts.map(toast => <Toast key={toast.id} {...toast} />)}</div>;
         const Modal = ({ isOpen, onClose, title, children }) => {
             if (!isOpen) return null;
             return (
                 <div className="fixed inset-0 bg-black/70 z-50 flex justify-center items-center p-4 no-print" onClick={onClose}>
-                    <div className="bg-card text-card-foreground rounded-lg shadow-2xl w-full max-w-2xl border border-border" onClick={e => e.stopPropagation()}>
-                        <div className="flex justify-between items-center p-4 border-b border-border"><h3 className="text-xl font-semibold">{title}</h3><button onClick={onClose} className="p-2 rounded-full hover:bg-accent"><X size={20} /></button></div>
+                    <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-lg shadow-2xl w-full max-w-2xl border border-gray-200 dark:border-gray-700" onClick={e => e.stopPropagation()}>
+                        <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-700"><h3 className="text-xl font-semibold">{title}</h3><button onClick={onClose} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700"><X size={20} /></button></div>
                         <div className="p-6 max-h-[70vh] overflow-y-auto">{children}</div>
                     </div>
                 </div>
             );
         };
+        const Skeleton = ({ className }) => <div className={`animate-pulse rounded-md bg-gray-200 dark:bg-gray-700 ${className}`} />;
         
         // --- LAYOUT COMPONENTS ---
         const Sidebar = ({ isSidebarOpen, setSidebarOpen, setCurrentPage }) => {
             const { profile } = useAuth();
-            const navItems = [ { name: 'Home', icon: Home, page: 'home' }, { name: 'Projects', icon: FolderKanban, page: 'projects' }, { name: 'Admin', icon: Shield, page: 'admin', roles: ['global_admin', 'role_admin'] }, { name: 'Twilio', icon: MessageSquare, page: 'twilio' }, { name: 'Email', icon: Mail, page: 'email' }, { name: 'Profile', icon: User, page: 'profile' }, { name: 'Help', icon: LifeBuoy, page: 'help' }, ];
+            const navItems = [ 
+                { name: 'Home', icon: Home, page: 'home' }, 
+                { name: 'Projects', icon: FolderKanban, page: 'projects' }, 
+                { name: 'Roles', icon: BookUser, page: 'roles' },
+                { name: 'Admin', icon: Shield, page: 'admin', roles: ['global_admin', 'role_admin'] }, 
+                { name: 'Twilio', icon: MessageSquare, page: 'twilio' }, 
+                { name: 'Email', icon: Mail, page: 'email' }, 
+                { name: 'Profile', icon: User, page: 'profile' }, 
+                { name: 'Help', icon: LifeBuoy, page: 'help' }, 
+            ];
             const handleNavClick = (page) => { setCurrentPage(page); if (window.innerWidth < 768) setSidebarOpen(false); };
-            const asideClass = `fixed top-0 left-0 h-full w-64 bg-card border-r border-border z-40 transition-transform duration-300 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 no-print`;
+            const asideClass = `fixed top-0 left-0 h-full w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 z-40 transition-transform duration-300 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 no-print`;
             return (<>
                 {isSidebarOpen && <div className="fixed inset-0 bg-black/60 z-30 md:hidden" onClick={() => setSidebarOpen(false)}></div>}
                 <aside className={asideClass}>
-                    <div className="flex items-center justify-between h-16 px-6 border-b border-border"><h1 className="text-xl font-bold text-primary">CostCalc</h1><button onClick={() => setSidebarOpen(false)} className="md:hidden text-foreground/70"><X size={24} /></button></div>
-                    <nav className="flex-grow p-4"><ul>{navItems.map(item => { if (item.roles && !item.roles.includes(profile?.role)) return null; return (<li key={item.name}><a href="#" onClick={(e) => { e.preventDefault(); handleNavClick(item.page); }} className="flex items-center px-4 py-3 text-foreground/80 hover:bg-accent hover:text-accent-foreground rounded-lg transition-colors"><item.icon size={20} className="mr-3" /><span>{item.name}</span></a></li>); })}</ul></nav>
+                    <div className="flex items-center justify-between h-16 px-6 border-b border-gray-200 dark:border-gray-700"><h1 className="text-xl font-bold text-blue-600 dark:text-blue-500">CostCalc</h1><button onClick={() => setSidebarOpen(false)} className="md:hidden"><X size={24} /></button></div>
+                    <nav className="flex-grow p-4"><ul>{navItems.map(item => { if (item.roles && !item.roles.includes(profile?.role)) return null; return (<li key={item.name}><a href="#" onClick={(e) => { e.preventDefault(); handleNavClick(item.page); }} className="flex items-center px-4 py-3 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"><item.icon size={20} className="mr-3" /><span>{item.name}</span></a></li>); })}</ul></nav>
                 </aside>
             </>);
         };
@@ -207,7 +212,7 @@
 
             useEffect(() => {
                 if (!user || !supabase) return;
-                const fetchNotifications = async () => { const { data, error } = await supabase.from('notifications').select('*').eq('user_id', user.id).order('created_at', { ascending: false }); if (error) addToast(`Failed to fetch notifications: ${error.message}`, 'error'); else setNotifications(data); };
+                const fetchNotifications = async () => { const { data, error } = await supabase.from('notifications').select('*').eq('user_id', user.id).order('created_at', { ascending: false }); if (error) addToast(`Error fetching notifications: ${error.message}`, 'error'); else setNotifications(data); };
                 fetchNotifications();
                 const channel = supabase.channel('public:notifications').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` }, payload => { setNotifications(current => [payload.new, ...current]); addToast('You have a new notification!', 'info'); }).subscribe();
                 return () => supabase.removeChannel(channel);
@@ -217,19 +222,18 @@
             const handleMarkAsRead = async (notifId) => { if (!supabase) return; const { error } = await supabase.from('notifications').update({ read: true }).eq('id', notifId); if (!error) setNotifications(notifications.map(n => n.id === notifId ? {...n, read: true} : n)); };
             
             return (
-                <header className="flex items-center justify-between h-16 px-4 sm:px-6 bg-card/80 backdrop-blur-sm border-b border-border sticky top-0 z-20 no-print">
-                    <button onClick={() => setSidebarOpen(true)} className="md:hidden text-foreground/70"><Menu size={24} /></button>
+                <header className="flex items-center justify-between h-16 px-4 sm:px-6 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm border-b border-gray-200 dark:border-gray-700 sticky top-0 z-20 no-print">
+                    <button onClick={() => setSidebarOpen(true)} className="md:hidden"><Menu size={24} /></button>
                     <div className="hidden md:block"></div>
                     <div className="flex items-center space-x-2 sm:space-x-4">
                         <Button variant="ghost" onClick={toggleTheme} className="p-2 h-10 w-10">
-                            <Sun size={20} className="hidden light:block" />
-                            <Moon size={20} className="hidden dark:block" />
+                           {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
                         </Button>
                         <div className="relative">
-                            <Button variant="ghost" onClick={() => setIsNotifOpen(!isNotifOpen)} className="p-2 h-10 w-10 relative"><Bell size={20} />{unreadCount > 0 && <span className="absolute top-1.5 right-1.5 block h-2 w-2 rounded-full bg-primary ring-2 ring-background"></span>}</Button>
-                            {isNotifOpen && <div className="absolute right-0 mt-2 w-80 bg-card rounded-lg shadow-xl border border-border z-50"><div className="p-3 font-semibold border-b border-border">Notifications</div><div className="max-h-96 overflow-y-auto">{notifications.map(n => (<div key={n.id} className={`p-3 border-b border-border/50 ${!n.read ? 'bg-primary/10' : ''}`}><p className="text-sm">{n.text}</p><div className="flex justify-between items-center mt-1"><span className="text-xs text-muted-foreground">{new Date(n.created_at).toLocaleString()}</span>{!n.read && <button onClick={() => handleMarkAsRead(n.id)} className="text-xs text-primary hover:underline">Mark as read</button>}</div></div>))}{notifications.length === 0 && <p className="text-center text-sm text-muted-foreground py-4">No new notifications.</p>}</div></div>}
+                            <Button variant="ghost" onClick={() => setIsNotifOpen(!isNotifOpen)} className="p-2 h-10 w-10 relative"><Bell size={20} />{unreadCount > 0 && <span className="absolute top-1.5 right-1.5 block h-2 w-2 rounded-full bg-blue-600 ring-2 ring-white dark:ring-gray-800"></span>}</Button>
+                            {isNotifOpen && <div className="absolute right-0 mt-2 w-80 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50"><div className="p-3 font-semibold border-b border-gray-200 dark:border-gray-700">Notifications</div><div className="max-h-96 overflow-y-auto">{notifications.map(n => (<div key={n.id} className={`p-3 border-b border-gray-200/50 dark:border-gray-700/50 ${!n.read ? 'bg-blue-50 dark:bg-blue-900/20' : ''}`}><p className="text-sm">{n.text}</p><div className="flex justify-between items-center mt-1"><span className="text-xs text-gray-500 dark:text-gray-400">{new Date(n.created_at).toLocaleString()}</span>{!n.read && <button onClick={() => handleMarkAsRead(n.id)} className="text-xs text-blue-600 dark:text-blue-500 hover:underline">Mark as read</button>}</div></div>))}{notifications.length === 0 && <p className="text-center text-sm text-gray-500 dark:text-gray-400 py-4">No new notifications.</p>}</div></div>}
                         </div>
-                        {profile && (<div className="flex items-center space-x-2"><div className="text-right hidden sm:block"><p className="font-semibold text-sm">{profile.first_name || 'User'}</p><p className="text-xs text-muted-foreground">{user.email}</p></div><Button variant="ghost" onClick={signOut} title="Sign Out" className="p-2 h-10 w-10"><LogOut size={20} /></Button></div>)}
+                        {profile && (<div className="flex items-center space-x-2"><div className="text-right hidden sm:block"><p className="font-semibold text-sm">{profile.first_name || 'User'}</p><p className="text-xs text-gray-500 dark:text-gray-400">{user.email}</p></div><Button variant="ghost" onClick={signOut} title="Sign Out" className="p-2 h-10 w-10"><LogOut size={20} /></Button></div>)}
                     </div>
                 </header>
             );
@@ -248,7 +252,7 @@
                 const newMembers = roles.map(role => ({ 
                     id: `${role.id}-${Date.now()}`, 
                     role_id: role.id, 
-                    role: role.name, 
+                    role: role.role, 
                     costRate: role.rate, 
                     billRate: role.rate * 1.5, 
                     monthlyAllocation: Array(settings.duration).fill(100) 
@@ -285,7 +289,7 @@
                     <div className="flex justify-between items-center mb-4"><h3 className="text-lg font-semibold flex items-center gap-2"><Users size={20}/> Team Members</h3><Button onClick={() => setIsMultiRoleModalOpen(true)}><Plus size={16}/> Add from Catalog</Button></div>
                     <div className="overflow-x-auto">
                         <table className="w-full text-sm text-left">
-                            <thead className="text-xs text-muted-foreground uppercase bg-secondary">
+                            <thead className="text-xs text-gray-500 dark:text-gray-400 uppercase bg-gray-50 dark:bg-gray-700/50">
                                 <tr>
                                     <th className="px-6 py-3">Role</th>
                                     <th className="px-6 py-3">Cost/hr</th>
@@ -294,9 +298,9 @@
                                     <th className="px-6 py-3">Actions</th>
                                 </tr>
                             </thead>
-                            <tbody>
+                            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                                 {team.map(member => (
-                                    <tr key={member.id} className="border-b dark:border-border">
+                                    <tr key={member.id}>
                                         <td className="px-6 py-4 font-medium">{member.role}</td>
                                         <td className="px-6 py-4">${parseFloat(member.costRate).toFixed(2)}</td>
                                         <td className="px-6 py-4">${parseFloat(member.billRate).toFixed(2)}</td>
@@ -304,13 +308,13 @@
                                         <td className="px-6 py-4 flex gap-2">
                                             <Button variant="ghost" size="sm" onClick={() => openMonthlyPlan(member)}><CalendarDays size={16}/></Button>
                                             <Button variant="ghost" size="sm" onClick={() => openEditModal(member)}><Edit size={16}/></Button>
-                                            <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10" onClick={() => handleRemoveMember(member.id)}><Trash2 size={16}/></Button>
+                                            <Button variant="ghost" size="sm" className="text-red-500 hover:bg-red-500/10" onClick={() => handleRemoveMember(member.id)}><Trash2 size={16}/></Button>
                                         </td>
                                     </tr>
                                 ))}
                                 {team.length === 0 && (
                                     <tr>
-                                        <td colSpan="5" className="text-center py-8 text-muted-foreground">No team members added yet.</td>
+                                        <td colSpan="5" className="text-center py-8 text-gray-500 dark:text-gray-400">No team members yet.</td>
                                     </tr>
                                 )}
                             </tbody>
@@ -332,18 +336,60 @@
             const [projectDescription, setProjectDescription] = useState('');
             const [roleCatalog, setRoleCatalog] = useState([]);
             const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+            const [exchangeRates, setExchangeRates] = useState({ USD: 1.0 });
+
+            useEffect(() => {
+                const fetchRoleCatalog = async () => {
+                    if (!supabase) return;
+                    const { data, error } = await supabase.from('role_catalog').select('*').eq('is_active', true);
+                    if (error) addToast('Could not fetch role catalog.', 'error');
+                    else setRoleCatalog(data);
+                };
+                fetchRoleCatalog();
+            }, [addToast]);
+
+            useEffect(() => {
+                if (projectToLoad) {
+                    setProjectName(projectToLoad.name);
+                    setSettings(projectToLoad.settings);
+                    setTeam(projectToLoad.team || []);
+                    setProjectDescription(projectToLoad.description || '');
+                    addToast(`Loaded project: ${projectToLoad.name}`, 'info');
+                    clearProjectToLoad();
+                }
+            }, [projectToLoad, clearProjectToLoad, addToast]);
+
+            useEffect(() => {
+                const fetchRates = async () => {
+                    try {
+                        const response = await fetch(`https://api.exchangerate.host/latest?base=USD&symbols=${SUPPORTED_CURRENCIES.join(',')}`);
+                        const data = await response.json();
+                        if(data.success) {
+                            setExchangeRates(data.rates);
+                        } else {
+                            addToast('Could not fetch latest currency rates.', 'error');
+                        }
+                    } catch (error) {
+                        addToast('Currency API is currently unavailable.', 'error');
+                    }
+                };
+                fetchRates();
+            }, [addToast]);
 
             const { totalCost, teamSize, avgMonthlyCost, totalBilling, blendedCostRate, blendedBillRate, avgMarkup, totalMonthlyHours, monthlyBilling } = useMemo(() => {
                 let totalHours = 0;
                 let cost = 0;
-                let billing = 0;
-
+                
                 team.forEach(member => {
                     const memberHours = (member.monthlyAllocation || []).reduce((sum, alloc) => sum + (settings.workingHours * (alloc / 100)), 0);
                     totalHours += memberHours;
                     cost += memberHours * member.costRate;
-                    billing += memberHours * member.billRate;
                 });
+                
+                const costWithBuffer = cost * (1 + settings.riskBuffer / 100);
+                const billing = costWithBuffer * (1 + settings.profitMargin / 100);
+
+                const conversionRate = exchangeRates[settings.currency] || 1;
 
                 const size = team.length;
                 const monthlyCost = size > 0 && settings.duration > 0 ? cost / settings.duration : 0;
@@ -354,17 +400,17 @@
                 const monthlyHours = totalHours / settings.duration || 0;
 
                 return { 
-                    totalCost: cost, 
+                    totalCost: cost * conversionRate, 
                     teamSize: size, 
-                    avgMonthlyCost: monthlyCost,
-                    totalBilling: billing,
-                    monthlyBilling: mBilling,
-                    blendedCostRate: bCostRate,
-                    blendedBillRate: bBillRate,
+                    avgMonthlyCost: monthlyCost * conversionRate,
+                    totalBilling: billing * conversionRate,
+                    monthlyBilling: mBilling * conversionRate,
+                    blendedCostRate: bCostRate * conversionRate,
+                    blendedBillRate: bBillRate * conversionRate,
                     avgMarkup: markup,
                     totalMonthlyHours: monthlyHours
                 };
-            }, [team, settings]);
+            }, [team, settings, exchangeRates]);
 
             const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: settings.currency }).format(amount);
             
@@ -377,34 +423,108 @@
                 setIsSettingsModalOpen(false);
                 addToast('Project settings updated!', 'info');
             };
+            
+            const handleExportPDF = () => {
+                const doc = new jsPDF();
+                doc.setFontSize(20);
+                doc.text('Project Cost Report', 14, 22);
+                doc.setFontSize(12);
+                doc.text(`Project: ${projectName}`, 14, 32);
+                doc.text(`Date: ${new Date().toLocaleDateString()}`, 14, 38);
+
+                autoTable(doc, {
+                    startY: 50,
+                    head: [['Metric', 'Value']],
+                    body: [
+                        ['Total Project Cost', formatCurrency(totalCost)],
+                        ['Total Project Billing', formatCurrency(totalBilling)],
+                        ['Team Size', `${teamSize} members`],
+                        ['Duration', `${settings.duration} months`],
+                        ['Average Monthly Cost', formatCurrency(avgMonthlyCost)],
+                    ],
+                    theme: 'striped',
+                    headStyles: { fillColor: [37, 99, 235] },
+                });
+
+                if (team.length > 0) {
+                    autoTable(doc, {
+                        startY: doc.lastAutoTable.finalY + 10,
+                        head: [['Role', 'Cost/hr', 'Bill/hr', 'Avg. Allocation']],
+                        body: team.map(m => [
+                            m.role,
+                            formatCurrency(m.costRate * (exchangeRates[settings.currency] || 1)),
+                            formatCurrency(m.billRate * (exchangeRates[settings.currency] || 1)),
+                            `${(m.monthlyAllocation.reduce((a, b) => a + b, 0) / m.monthlyAllocation.length).toFixed(0)}%`
+                        ]),
+                        theme: 'grid',
+                        headStyles: { fillColor: [37, 99, 235] },
+                    });
+                }
+                
+                doc.save(`${projectName.replace(/\s+/g, '_')}_report.pdf`);
+                addToast('PDF export started.', 'info');
+            };
+
+            const handleSave = async (isTemplate = false) => {
+                if (!supabase || !user) { 
+                    addToast('You must be logged in to save.', 'error'); 
+                    return; 
+                }
+                
+                const table = isTemplate ? 'project_templates' : 'projects';
+                const projectData = { 
+                    name: projectName, 
+                    owner_id: user.id, 
+                    settings: {...settings, description: projectDescription},
+                    team: team,
+                    is_template: isTemplate,
+                    description: projectDescription,
+                };
+                
+                const { error } = await supabase.from(table).insert([projectData]);
+
+                if (error) {
+                    addToast(`Error saving ${isTemplate ? 'template' : 'project'}: ${error.message}`, 'error');
+                } else {
+                    addToast(`${isTemplate ? 'Template' : 'Project'} saved successfully!`, 'info');
+                }
+            };
 
             return (
-                <PageWrapper title="Professional Calculator">
+                <PageWrapper 
+                    title="Professional Calculator"
+                    actions={
+                        <>
+                            <Button onClick={() => handleSave(true)} variant="secondary"><Copy size={16}/> Save as Template</Button>
+                            <Button onClick={() => handleSave(false)} variant="primary"><Save size={16}/> Save Project</Button>
+                        </>
+                    }
+                >
                     <div className="space-y-6">
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                             <Card className="flex justify-between items-start">
                                 <div>
-                                    <p className="text-muted-foreground">Total Project Cost</p>
+                                    <p className="text-gray-500 dark:text-gray-400">Total Project Cost</p>
                                     <p className="text-3xl font-bold">{formatCurrency(totalCost)}</p>
-                                    <p className="text-sm text-muted-foreground">{settings.duration} month duration</p>
+                                    <p className="text-sm text-gray-500 dark:text-gray-400">{settings.duration} month duration</p>
                                 </div>
-                                <DollarSign className="text-muted-foreground" />
+                                <DollarSign className="text-gray-400" />
                             </Card>
                             <Card className="flex justify-between items-start">
                                 <div>
-                                    <p className="text-muted-foreground">Team Size</p>
+                                    <p className="text-gray-500 dark:text-gray-400">Team Size</p>
                                     <p className="text-3xl font-bold">{teamSize}</p>
-                                    <p className="text-sm text-muted-foreground">Active team members</p>
+                                    <p className="text-sm text-gray-500 dark:text-gray-400">Active team members</p>
                                 </div>
-                                <Users className="text-muted-foreground" />
+                                <Users className="text-gray-400" />
                             </Card>
                             <Card className="flex justify-between items-start">
                                 <div>
-                                    <p className="text-muted-foreground">Avg. Monthly Cost</p>
+                                    <p className="text-gray-500 dark:text-gray-400">Avg. Monthly Cost</p>
                                     <p className="text-3xl font-bold">{formatCurrency(avgMonthlyCost)}</p>
-                                    <p className="text-sm text-muted-foreground">Per month average</p>
+                                    <p className="text-sm text-gray-500 dark:text-gray-400">Per month average</p>
                                 </div>
-                                <BarChart3 className="text-muted-foreground" />
+                                <BarChart3 className="text-gray-400" />
                             </Card>
                         </div>
 
@@ -413,26 +533,29 @@
                                 <Card>
                                     <div className="flex justify-between items-center mb-4">
                                         <h3 className="text-lg font-semibold flex items-center gap-2"><Settings size={20}/> Project Settings</h3>
-                                        <Button variant="ghost" onClick={() => setIsSettingsModalOpen(true)}>Edit</Button>
+                                        <div className="flex gap-2">
+                                            <Button variant="ghost" onClick={() => setIsSettingsModalOpen(true)}>Edit</Button>
+                                            <Button variant="ghost" onClick={handleExportPDF}><Download size={16}/></Button>
+                                        </div>
                                     </div>
                                     <div className="space-y-4">
                                         <div>
                                             <p className="font-semibold">{projectName}</p>
-                                            <p className="text-sm text-muted-foreground">{settings.duration} months</p>
+                                            <p className="text-sm text-gray-500 dark:text-gray-400">{settings.duration} months</p>
                                         </div>
                                         <div>
                                             <p className="font-semibold">Description</p>
-                                            <p className="text-sm text-muted-foreground">{projectDescription || 'No description provided'}</p>
+                                            <p className="text-sm text-gray-500 dark:text-gray-400">{projectDescription || 'No description provided'}</p>
                                         </div>
                                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4">
-                                            <div><p className="text-sm text-muted-foreground">Monthly Hours</p><p className="font-semibold">{settings.workingHours} hrs</p></div>
-                                            <div><p className="text-sm text-muted-foreground">Tax Rate (%)</p><p className="font-semibold">{settings.taxRate}%</p></div>
-                                            <div><p className="text-sm text-muted-foreground">Risk Buffer (%)</p><p className="font-semibold">{settings.riskBuffer}%</p></div>
-                                            <div><p className="text-sm text-muted-foreground">Profit Margin (%)</p><p className="font-semibold">{settings.profitMargin}%</p></div>
+                                            <div><p className="text-sm text-gray-500 dark:text-gray-400">Monthly Hours</p><p className="font-semibold">{settings.workingHours} h</p></div>
+                                            <div><p className="text-sm text-gray-500 dark:text-gray-400">Tax Rate (%)</p><p className="font-semibold">{settings.taxRate}%</p></div>
+                                            <div><p className="text-sm text-gray-500 dark:text-gray-400">Risk Buffer (%)</p><p className="font-semibold">{settings.riskBuffer}%</p></div>
+                                            <div><p className="text-sm text-gray-500 dark:text-gray-400">Profit Margin (%)</p><p className="font-semibold">{settings.profitMargin}%</p></div>
                                         </div>
                                         <div>
-                                            <p className="font-semibold">Includes Tax</p>
-                                            <p className="text-sm text-muted-foreground">{settings.includesTax ? 'Prices include tax' : 'Prices exclude tax'}</p>
+                                            <p className="font-semibold">Currency</p>
+                                            <p className="text-sm text-gray-500 dark:text-gray-400">{settings.currency}</p>
                                         </div>
                                     </div>
                                 </Card>
@@ -449,7 +572,7 @@
                                                 <div className="flex justify-between"><span>Project Billing</span><span>{formatCurrency(totalBilling)}</span></div>
                                                 <div className="flex justify-between"><span>Monthly Cost</span><span>{formatCurrency(avgMonthlyCost)}</span></div>
                                                 <div className="flex justify-between"><span>Monthly Billing</span><span>{formatCurrency(monthlyBilling)}</span></div>
-                                                <div className="flex justify-between"><span>Margin Health</span><span>{((totalBilling - totalCost) / totalBilling * 100 || 0).toFixed(1)}%</span></div>
+                                                <div className="flex justify-between"><span>Margin</span><span>{((totalBilling - totalCost) / totalBilling * 100 || 0).toFixed(1)}%</span></div>
                                             </div>
                                         </div>
                                          <div>
@@ -548,33 +671,33 @@
 
             return (
                  <PageWrapper title="Projects & Templates">
-                    <div className="flex border-b border-border mb-4">
-                        <button onClick={() => setView('projects')} className={`px-4 py-2 text-sm font-medium ${view === 'projects' ? 'border-b-2 border-primary text-primary' : 'text-muted-foreground'}`}>My Projects</button>
-                        <button onClick={() => setView('templates')} className={`px-4 py-2 text-sm font-medium ${view === 'templates' ? 'border-b-2 border-primary text-primary' : 'text-muted-foreground'}`}>My Templates</button>
+                    <div className="flex border-b border-gray-200 dark:border-gray-700 mb-4">
+                        <button onClick={() => setView('projects')} className={`px-4 py-2 text-sm font-medium ${view === 'projects' ? 'border-b-2 border-blue-500 text-blue-600 dark:text-blue-500' : 'text-gray-500 dark:text-gray-400'}`}>My Projects</button>
+                        <button onClick={() => setView('templates')} className={`px-4 py-2 text-sm font-medium ${view === 'templates' ? 'border-b-2 border-blue-500 text-blue-600 dark:text-blue-500' : 'text-gray-500 dark:text-gray-400'}`}>My Templates</button>
                     </div>
                     <Card>
                         <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-4">
                             <div className="relative w-full sm:max-w-xs">
-                                <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                                <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                                 <Input placeholder="Search by name..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="pl-10" />
                             </div>
                             {selected.length > 0 && <Button variant="danger" onClick={handleBulkDelete}>Delete ({selected.length})</Button>}
                         </div>
                         <div className="overflow-x-auto">
                             <table className="w-full text-sm text-left">
-                                <thead className="text-xs text-muted-foreground uppercase bg-secondary">
+                                <thead className="text-xs text-gray-500 dark:text-gray-400 uppercase bg-gray-50 dark:bg-gray-700/50">
                                     <tr>
-                                        <th className="p-4"><input type="checkbox" onChange={handleSelectAll} checked={selected.length === sortedAndFilteredData.length && sortedAndFilteredData.length > 0} /></th>
+                                        <th className="p-4"><input type="checkbox" onChange={handleSelectAll} checked={selected.length === sortedAndFilteredData.length && sortedAndFilteredData.length > 0} className="rounded" /></th>
                                         <th className="px-6 py-3">Name</th>
                                         <th className="px-6 py-3">Last Modified</th>
                                         <th className="px-6 py-3">Actions</th>
                                     </tr>
                                 </thead>
-                                <tbody>
+                                <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                                     {isLoading ? (<tr><td colSpan="4" className="text-center p-4">Loading...</td></tr>) : 
                                     sortedAndFilteredData.map(item => (
-                                        <tr key={item.id} className="border-b dark:border-border">
-                                            <td className="p-4"><input type="checkbox" checked={selected.includes(item.id)} onChange={() => handleSelectOne(item.id)} /></td>
+                                        <tr key={item.id}>
+                                            <td className="p-4"><input type="checkbox" checked={selected.includes(item.id)} onChange={() => handleSelectOne(item.id)} className="rounded" /></td>
                                             <td className="px-6 py-4 font-medium">{item.name}</td>
                                             <td className="px-6 py-4">{new Date(item.updated_at).toLocaleString()}</td>
                                             <td className="px-6 py-4 flex gap-2">
@@ -628,7 +751,7 @@
                                     if (!tab.roles.includes(profile?.role)) return null;
                                     const isActive = activeTab === tab.id;
                                     return (
-                                        <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex items-center gap-3 px-4 py-2.5 text-sm font-medium rounded-lg transition-colors ${isActive ? 'bg-primary/10 text-primary' : 'hover:bg-accent'}`}>
+                                        <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex items-center gap-3 px-4 py-2.5 text-sm font-medium rounded-lg transition-colors ${isActive ? 'bg-blue-500/10 text-blue-500' : 'hover:bg-gray-100 dark:hover:bg-gray-700'}`}>
                                             <tab.icon size={20} />
                                             <span>{tab.label}</span>
                                         </button>
@@ -644,8 +767,8 @@
             );
         };
 
-        const ProfilePage = () => <PageWrapper title="My Profile"><Card><p className="text-muted-foreground">Users will be able to manage their profile information here.</p></Card></PageWrapper>;
-        const HelpPage = () => <PageWrapper title="Help"><Card><p className="text-muted-foreground">This section will contain helpful guides and FAQs.</p></Card></PageWrapper>;
+        const ProfilePage = () => <PageWrapper title="My Profile"><Card><p className="text-gray-500 dark:text-gray-400">Users will be able to manage their profile information here.</p></Card></PageWrapper>;
+        const HelpPage = () => <PageWrapper title="Help"><Card><p className="text-gray-500 dark:text-gray-400">This section will contain helpful guides and FAQs.</p></Card></PageWrapper>;
         
         const AuthPage = () => {
             const { signIn, signUp } = useAuth(); 
@@ -666,7 +789,7 @@
                 }
                 setLoading(false);
             };
-            return (<div className="flex flex-col justify-center items-center min-h-screen bg-background p-4"><div className="w-full max-w-sm"><div className="text-center mb-6"><h1 className="text-3xl font-bold text-primary">CostCalc</h1><p className="text-muted-foreground">{isLogin ? 'Sign in to your account' : 'Create a new account'}</p></div><Card><form onSubmit={handleAuth} className="space-y-4"><div><label className="text-sm font-medium">Email</label><Input type="email" value={email} onChange={e => setEmail(e.target.value)} required /></div><div><label className="text-sm font-medium">Password</label><Input type="password" value={password} onChange={e => setPassword(e.target.value)} required /></div><Button type="submit" variant="primary" className="w-full" disabled={loading}>{loading ? 'Processing...' : (isLogin ? 'Sign In' : 'Sign Up')}</Button></form></Card><p className="text-center mt-4 text-sm"><button onClick={() => setIsLogin(!isLogin)} className="text-primary hover:underline">{isLogin ? 'Need an account? Sign Up' : 'Already have an account? Sign In'}</button></p></div></div>);
+            return (<div className="flex flex-col justify-center items-center min-h-screen bg-gray-50 dark:bg-gray-900 p-4"><div className="w-full max-w-sm"><div className="text-center mb-6"><h1 className="text-3xl font-bold text-blue-600 dark:text-blue-500">CostCalc</h1><p className="text-gray-500 dark:text-gray-400">{isLogin ? 'Sign in to your account' : 'Create a new account'}</p></div><Card><form onSubmit={handleAuth} className="space-y-4"><div><label className="text-sm font-medium">Email</label><Input type="email" value={email} onChange={e => setEmail(e.target.value)} required /></div><div><label className="text-sm font-medium">Password</label><Input type="password" value={password} onChange={e => setPassword(e.target.value)} required /></div><Button type="submit" variant="primary" className="w-full" disabled={loading}>{loading ? 'Processing...' : (isLogin ? 'Sign In' : 'Sign Up')}</Button></form></Card><p className="text-center mt-4 text-sm"><button onClick={() => setIsLogin(!isLogin)} className="text-blue-600 dark:text-blue-500 hover:underline">{isLogin ? 'Need an account? Sign Up' : 'Already have an account? Sign In'}</button></p></div></div>);
         };
         
         const TwilioPage = () => {
@@ -699,15 +822,15 @@
                             <h3 className="text-lg font-semibold mb-4">Twilio Credentials</h3>
                             <div className="space-y-4">
                                 <div>
-                                    <label htmlFor="sid" className="block text-sm font-medium text-muted-foreground mb-1">Account SID</label>
+                                    <label htmlFor="sid" className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Account SID</label>
                                     <Input id="sid" type="password" value={credentials.sid} onChange={e => setCredentials({...credentials, sid: e.target.value})} />
                                 </div>
                                 <div>
-                                    <label htmlFor="token" className="block text-sm font-medium text-muted-foreground mb-1">Auth Token</label>
+                                    <label htmlFor="token" className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Auth Token</label>
                                     <Input id="token" type="password" value={credentials.token} onChange={e => setCredentials({...credentials, token: e.target.value})} />
                                 </div>
                                 <div>
-                                    <label htmlFor="twilioPhone" className="block text-sm font-medium text-muted-foreground mb-1">Twilio Phone Number</label>
+                                    <label htmlFor="twilioPhone" className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Twilio Phone Number</label>
                                     <Input id="twilioPhone" type="text" value={credentials.twilioPhone} onChange={e => setCredentials({...credentials, twilioPhone: e.target.value})} />
                                 </div>
                             </div>
@@ -716,11 +839,11 @@
                             <h3 className="text-lg font-semibold mb-4">Send Test Message</h3>
                             <div className="space-y-4">
                                 <div>
-                                    <label htmlFor="to" className="block text-sm font-medium text-muted-foreground mb-1">Recipient Phone Number</label>
+                                    <label htmlFor="to" className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Recipient Number</label>
                                     <Input id="to" type="text" value={message.to} onChange={e => setMessage({...message, to: e.target.value})} placeholder="+1234567890" />
                                 </div>
                                 <div>
-                                    <label htmlFor="text" className="block text-sm font-medium text-muted-foreground mb-1">Message</label>
+                                    <label htmlFor="text" className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Message</label>
                                     <Textarea id="text" value={message.text} onChange={e => setMessage({...message, text: e.target.value})} rows="4" />
                                 </div>
                                 <Button onClick={handleSend} disabled={status.sending}>{status.sending ? 'Sending...' : 'Send Test SMS'}</Button>
@@ -765,19 +888,19 @@
                             <h3 className="text-lg font-semibold mb-4">Compose Email</h3>
                             <div className="space-y-4">
                                 <div>
-                                    <label htmlFor="sender" className="block text-sm font-medium text-muted-foreground mb-1">Sender Email</label>
+                                    <label htmlFor="sender" className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Sender Email</label>
                                     <Input id="sender" type="email" value={emailData.sender} onChange={e => setEmailData({...emailData, sender: e.target.value})} placeholder="sender@example.com" />
                                 </div>
                                 <div>
-                                    <label htmlFor="recipient" className="block text-sm font-medium text-muted-foreground mb-1">Recipient Email</label>
+                                    <label htmlFor="recipient" className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Recipient Email</label>
                                     <Input id="recipient" type="email" value={emailData.recipient} onChange={e => setEmailData({...emailData, recipient: e.target.value})} placeholder="recipient@example.com" />
                                 </div>
                                 <div>
-                                    <label htmlFor="subject" className="block text-sm font-medium text-muted-foreground mb-1">Subject</label>
+                                    <label htmlFor="subject" className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Subject</label>
                                     <Input id="subject" type="text" value={emailData.subject} onChange={e => setEmailData({...emailData, subject: e.target.value})} />
                                 </div>
                                 <div>
-                                    <label htmlFor="body" className="block text-sm font-medium text-muted-foreground mb-1">Message Body</label>
+                                    <label htmlFor="body" className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Message Body</label>
                                     <Textarea id="body" value={emailData.body} onChange={e => setEmailData({...emailData, body: e.target.value})} rows="6" />
                                 </div>
                                 <Button onClick={handleSendEmail} disabled={status.sending}>{status.sending ? 'Sending...' : 'Send Email'}</Button>
@@ -804,7 +927,7 @@
                 if (!supabase) return;
                 setLoading(true);
                 const { data, error } = await supabase.from('profiles').select('*');
-                if (error) addToast('Failed to fetch users: ' + error.message, 'error');
+                if (error) addToast('Error fetching users: ' + error.message, 'error');
                 else setUsers(data);
                 setLoading(false);
             }, [addToast]);
@@ -814,7 +937,7 @@
             const handleSaveUser = async (updatedUser) => {
                 const { error } = await supabase.from('profiles').update({ role: updatedUser.role, is_active: updatedUser.is_active }).eq('id', updatedUser.id);
                 if (error) {
-                    addToast('Failed to update user: ' + error.message, 'error');
+                    addToast('Error updating user: ' + error.message, 'error');
                 } else {
                     addToast('User updated successfully.', 'info');
                     fetchUsers();
@@ -824,10 +947,10 @@
 
             return (
                 <div>
-                    <h3 className="text-lg font-semibold mb-4">Manage Users</h3>
+                    <h3 className="text-lg font-semibold mb-4">User Management</h3>
                     <div className="overflow-x-auto">
                         <table className="w-full text-sm text-left">
-                            <thead className="text-xs text-muted-foreground uppercase bg-secondary">
+                            <thead className="text-xs text-gray-500 dark:text-gray-400 uppercase bg-gray-50 dark:bg-gray-700/50">
                                 <tr>
                                     <th className="px-6 py-3">Name</th>
                                     <th className="px-6 py-3">Email</th>
@@ -836,14 +959,14 @@
                                     <th className="px-6 py-3">Actions</th>
                                 </tr>
                             </thead>
-                            <tbody>
+                            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                                 {loading ? <tr><td colSpan="5" className="text-center p-4">Loading...</td></tr> :
                                 users.map(user => (
-                                    <tr key={user.id} className="border-b dark:border-border">
+                                    <tr key={user.id}>
                                         <td className="px-6 py-4 font-medium">{user.first_name} {user.last_name}</td>
                                         <td className="px-6 py-4">{user.email}</td>
-                                        <td className="px-6 py-4"><span className={`px-2 py-1 text-xs font-medium rounded-full ${user.role === 'global_admin' ? 'bg-primary/20 text-primary' : 'bg-secondary'}`}>{user.role}</span></td>
-                                        <td className="px-6 py-4"><span className={`px-2 py-1 text-xs font-medium rounded-full ${user.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>{user.is_active ? 'Active' : 'Inactive'}</span></td>
+                                        <td className="px-6 py-4"><span className={`px-2 py-1 text-xs font-medium rounded-full ${user.role === 'global_admin' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-300' : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300'}`}>{user.role}</span></td>
+                                        <td className="px-6 py-4"><span className={`px-2 py-1 text-xs font-medium rounded-full ${user.is_active ? 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300' : 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300'}`}>{user.is_active ? 'Active' : 'Inactive'}</span></td>
                                         <td className="px-6 py-4"><Button variant="ghost" onClick={() => setEditingUser(user)}><Edit size={16}/></Button></td>
                                     </tr>
                                 ))}
@@ -867,7 +990,7 @@
                 if (!supabase) return;
                 setLoading(true);
                 const { data, error } = await supabase.from('role_catalog').select('*');
-                if (error) addToast('Failed to fetch roles: ' + error.message, 'error');
+                if (error) addToast('Error fetching roles: ' + error.message, 'error');
                 else setRoles(data);
                 setLoading(false);
             }, [addToast]);
@@ -875,42 +998,44 @@
             useEffect(() => { fetchRoles(); }, [fetchRoles]);
 
             const handleSaveRole = async (updatedRole) => {
-                const { error } = await supabase.from('role_catalog').update({ name: updatedRole.name, rate: updatedRole.rate, category: updatedRole.category, is_active: updatedRole.is_active }).eq('id', updatedRole.id);
-                if (error) addToast('Failed to update role: ' + error.message, 'error');
+                const { error } = await supabase.from('role_catalog').update({ role: updatedRole.role, rate: updatedRole.rate, cost_rate: updatedRole.cost_rate, location: updatedRole.location, description: updatedRole.description, is_active: updatedRole.is_active }).eq('id', updatedRole.id);
+                if (error) addToast('Error updating role: ' + error.message, 'error');
                 else { addToast('Role updated.', 'info'); fetchRoles(); setEditingRole(null); }
             };
 
             const handleAddRole = async (newRole) => {
                 const { error } = await supabase.from('role_catalog').insert([{ ...newRole, created_by: user.id }]);
-                if (error) addToast('Failed to add role: ' + error.message, 'error');
+                if (error) addToast('Error adding role: ' + error.message, 'error');
                 else { addToast('Role added.', 'info'); fetchRoles(); setIsAdding(false); }
             };
 
             return (
                 <div>
                     <div className="flex justify-between items-center mb-4">
-                        <h3 className="text-lg font-semibold">Manage Role Catalog</h3>
+                        <h3 className="text-lg font-semibold">Role Catalog Management</h3>
                         <Button onClick={() => setIsAdding(true)}><Plus size={16}/> Add New Role</Button>
                     </div>
                     <div className="overflow-x-auto">
                         <table className="w-full text-sm text-left">
-                            <thead className="text-xs text-muted-foreground uppercase bg-secondary">
+                            <thead className="text-xs text-gray-500 dark:text-gray-400 uppercase bg-gray-50 dark:bg-gray-700/50">
                                 <tr>
-                                    <th className="px-6 py-3">Name</th>
-                                    <th className="px-6 py-3">Base Rate</th>
-                                    <th className="px-6 py-3">Category</th>
+                                    <th className="px-6 py-3">Role</th>
+                                    <th className="px-6 py-3">Rate</th>
+                                    <th className="px-6 py-3">Cost Rate</th>
+                                    <th className="px-6 py-3">Location</th>
                                     <th className="px-6 py-3">Status</th>
                                     <th className="px-6 py-3">Actions</th>
                                 </tr>
                             </thead>
-                            <tbody>
-                                {loading ? <tr><td colSpan="5" className="text-center p-4">Loading...</td></tr> :
+                            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                                {loading ? <tr><td colSpan="6" className="text-center p-4">Loading...</td></tr> :
                                 roles.map(role => (
-                                    <tr key={role.id} className="border-b dark:border-border">
-                                        <td className="px-6 py-4 font-medium">{role.name}</td>
+                                    <tr key={role.id}>
+                                        <td className="px-6 py-4 font-medium">{role.role}</td>
                                         <td className="px-6 py-4">${role.rate}</td>
-                                        <td className="px-6 py-4">{role.category}</td>
-                                        <td className="px-6 py-4"><span className={`px-2 py-1 text-xs font-medium rounded-full ${role.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>{role.is_active ? 'Active' : 'Inactive'}</span></td>
+                                        <td className="px-6 py-4">${role.cost_rate}</td>
+                                        <td className="px-6 py-4">{role.location}</td>
+                                        <td className="px-6 py-4"><span className={`px-2 py-1 text-xs font-medium rounded-full ${role.is_active ? 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300' : 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300'}`}>{role.is_active ? 'Active' : 'Inactive'}</span></td>
                                         <td className="px-6 py-4"><Button variant="ghost" onClick={() => setEditingRole(role)}><Edit size={16}/></Button></td>
                                     </tr>
                                 ))}
@@ -935,7 +1060,7 @@
                     // This is a placeholder as audit logs are typically populated by database triggers.
                     // For now, it will likely return an empty array.
                     const { data, error } = await supabase.from('audit_logs').select('*, profiles(first_name, last_name)').order('created_at', { ascending: false });
-                    if (error) addToast('Failed to fetch audit logs: ' + error.message, 'error');
+                    if (error) addToast('Error fetching audit logs: ' + error.message, 'error');
                     else setLogs(data);
                     setLoading(false);
                 };
@@ -945,10 +1070,10 @@
             return (
                 <div>
                     <h3 className="text-lg font-semibold mb-4">Audit Log</h3>
-                    <p className="text-sm text-muted-foreground mb-4">Tracks all major changes within the system.</p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Tracks all major changes within the system.</p>
                     <div className="overflow-x-auto">
                         <table className="w-full text-sm text-left">
-                            <thead className="text-xs text-muted-foreground uppercase bg-secondary">
+                            <thead className="text-xs text-gray-500 dark:text-gray-400 uppercase bg-gray-50 dark:bg-gray-700/50">
                                 <tr>
                                     <th className="px-6 py-3">Timestamp</th>
                                     <th className="px-6 py-3">User</th>
@@ -956,11 +1081,11 @@
                                     <th className="px-6 py-3">Details</th>
                                 </tr>
                             </thead>
-                            <tbody>
+                            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                                 {loading ? <tr><td colSpan="4" className="text-center p-4">Loading...</td></tr> :
-                                logs.length === 0 ? <tr><td colSpan="4" className="text-center p-8 text-muted-foreground">No audit logs found.</td></tr> :
+                                logs.length === 0 ? <tr><td colSpan="4" className="text-center p-8 text-gray-500 dark:text-gray-400">No audit logs found.</td></tr> :
                                 logs.map(log => (
-                                    <tr key={log.id} className="border-b dark:border-border">
+                                    <tr key={log.id}>
                                         <td className="px-6 py-4">{new Date(log.created_at).toLocaleString()}</td>
                                         <td className="px-6 py-4">{log.profiles ? `${log.profiles.first_name} ${log.profiles.last_name}` : 'System'}</td>
                                         <td className="px-6 py-4 font-mono text-xs">{log.action}</td>
@@ -980,7 +1105,7 @@
             useEffect(() => { if (monthlyAllocation.length !== duration) { const newAllocation = Array(duration).fill(100); for(let i = 0; i < Math.min(monthlyAllocation.length, duration); i++) { newAllocation[i] = monthlyAllocation[i]; } setMonthlyAllocation(newAllocation); } }, [duration, monthlyAllocation]);
             const handleAllocationChange = (index, value) => { const newAllocations = [...monthlyAllocation]; newAllocations[index] = parseInt(value, 10) || 0; setMonthlyAllocation(newAllocations); };
             const handleSave = () => { onSave(member.id, monthlyAllocation); onClose(); };
-            return (<Modal isOpen={isOpen} onClose={onClose} title={`Monthly Plan: ${member.role}`}><div className="space-y-4"><p className="text-muted-foreground">Set the allocation percentage for each month of the project.</p><div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">{monthlyAllocation.map((alloc, index) => (<div key={index}><label className="block text-sm font-medium mb-1">Month {index + 1}</label><Input type="number" value={alloc} onChange={e => handleAllocationChange(index, e.target.value)} min="0" max="100" /></div>))}</div><div className="flex justify-end gap-4 pt-4"><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant="primary" onClick={handleSave}>Save Plan</Button></div></div></Modal>);
+            return (<Modal isOpen={isOpen} onClose={onClose} title={`Monthly Plan: ${member.role}`}><div className="space-y-4"><p className="text-gray-500 dark:text-gray-400">Set the allocation percentage for each month of the project.</p><div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">{monthlyAllocation.map((alloc, index) => (<div key={index}><label className="block text-sm font-medium mb-1">Month {index + 1}</label><Input type="number" value={alloc} onChange={e => handleAllocationChange(index, e.target.value)} min="0" max="100" /></div>))}</div><div className="flex justify-end gap-4 pt-4"><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant="primary" onClick={handleSave}>Save Plan</Button></div></div></Modal>);
         };
 
         const EditTeamMemberModal = ({ isOpen, onClose, member, onSave }) => {
@@ -995,9 +1120,9 @@
             return (
                 <Modal isOpen={isOpen} onClose={onClose} title={`Edit Role: ${member.role}`}>
                     <div className="space-y-4">
-                        <div><label className="block text-sm font-medium text-muted-foreground mb-1">Role Name</label><Input type="text" value={formData.role} onChange={e => handleChange('role', e.target.value)} /></div>
-                        <div><label className="block text-sm font-medium text-muted-foreground mb-1">Cost Rate ($/hr)</label><Input type="number" value={formData.costRate} onChange={e => handleChange('costRate', parseFloat(e.target.value) || 0)} /></div>
-                        <div><label className="block text-sm font-medium text-muted-foreground mb-1">Bill Rate ($/hr)</label><Input type="number" value={formData.billRate} onChange={e => handleChange('billRate', parseFloat(e.target.value) || 0)} /></div>
+                        <div><label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Role Name</label><Input type="text" value={formData.role} onChange={e => handleChange('role', e.target.value)} /></div>
+                        <div><label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Cost Rate ($/hr)</label><Input type="number" value={formData.costRate} onChange={e => handleChange('costRate', parseFloat(e.target.value) || 0)} /></div>
+                        <div><label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Bill Rate ($/hr)</label><Input type="number" value={formData.billRate} onChange={e => handleChange('billRate', parseFloat(e.target.value) || 0)} /></div>
                         <div className="flex justify-end gap-4 pt-4"><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant="primary" onClick={handleSave}>Save Changes</Button></div>
                     </div>
                 </Modal>
@@ -1008,7 +1133,7 @@
             const [selectedRoles, setSelectedRoles] = useState({});
             const handleToggleRole = (role) => { setSelectedRoles(prev => { const newSelection = {...prev}; if (newSelection[role.id]) delete newSelection[role.id]; else newSelection[role.id] = role; return newSelection; }); };
             const handleAdd = () => { onAddRoles(Object.values(selectedRoles)); onClose(); setSelectedRoles({}); };
-            return (<Modal isOpen={isOpen} onClose={onClose} title="Add Roles from Catalog"><div className="space-y-4"><p className="text-muted-foreground">Select one or more roles to add to your project team.</p><div className="space-y-2 max-h-64 overflow-y-auto p-1">{roleCatalog.map(role => (<label key={role.id} className="flex items-center gap-3 p-3 rounded-lg hover:bg-accent transition-colors cursor-pointer"><input type="checkbox" checked={!!selectedRoles[role.id]} onChange={() => handleToggleRole(role)} className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"/><span className="font-medium flex-grow">{role.name}</span><span className="text-muted-foreground">${role.rate}/hr</span></label>))}</div><div className="flex justify-end gap-4 pt-4"><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant="primary" onClick={handleAdd} disabled={Object.keys(selectedRoles).length === 0}>Add {Object.keys(selectedRoles).length || ''} Role(s)</Button></div></div></Modal>);
+            return (<Modal isOpen={isOpen} onClose={onClose} title="Add Roles from Catalog"><div className="space-y-4"><p className="text-gray-500 dark:text-gray-400">Select one or more roles to add to your project team.</p><div className="space-y-2 max-h-64 overflow-y-auto p-1">{roleCatalog.map(role => (<label key={role.id} className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors cursor-pointer"><input type="checkbox" checked={!!selectedRoles[role.id]} onChange={() => handleToggleRole(role)} className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"/><span className="font-medium flex-grow">{role.role}</span><span className="text-gray-500 dark:text-gray-400">${role.rate}/hr</span></label>))}</div><div className="flex justify-end gap-4 pt-4"><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant="primary" onClick={handleAdd} disabled={Object.keys(selectedRoles).length === 0}>Add {Object.keys(selectedRoles).length || ''} Role(s)</Button></div></div></Modal>);
         };
         
         const EditUserModal = ({ isOpen, onClose, user, onSave }) => {
@@ -1017,8 +1142,8 @@
             return (
                 <Modal isOpen={isOpen} onClose={onClose} title={`Edit User: ${user.first_name}`}>
                     <div className="space-y-4">
-                        <div><label className="block text-sm font-medium text-muted-foreground mb-1">Role</label><Select value={formData.role} onChange={e => setFormData({...formData, role: e.target.value})}><option value="user">User</option><option value="role_admin">Role Admin</option><option value="global_admin">Global Admin</option></Select></div>
-                        <div><label className="block text-sm font-medium text-muted-foreground mb-1">Status</label><Select value={formData.is_active} onChange={e => setFormData({...formData, is_active: e.target.value === 'true'})}><option value="true">Active</option><option value="false">Inactive</option></Select></div>
+                        <div><label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Role</label><Select value={formData.role} onChange={e => setFormData({...formData, role: e.target.value})}><option value="user">User</option><option value="role_admin">Role Admin</option><option value="global_admin">Global Admin</option></Select></div>
+                        <div><label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Status</label><Select value={formData.is_active} onChange={e => setFormData({...formData, is_active: e.target.value === 'true'})}><option value="true">Active</option><option value="false">Inactive</option></Select></div>
                         <div className="flex justify-end gap-4 pt-4"><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant="primary" onClick={handleSave}>Save Changes</Button></div>
                     </div>
                 </Modal>
@@ -1029,12 +1154,14 @@
             const [formData, setFormData] = useState(role);
             const handleSave = () => onSave(formData);
             return (
-                <Modal isOpen={isOpen} onClose={onClose} title={`Edit Role: ${role.name}`}>
+                <Modal isOpen={isOpen} onClose={onClose} title={`Edit Role: ${role.role}`}>
                     <div className="space-y-4">
-                        <div><label className="block text-sm font-medium text-muted-foreground mb-1">Role Name</label><Input value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} /></div>
-                        <div><label className="block text-sm font-medium text-muted-foreground mb-1">Base Rate ($/hr)</label><Input type="number" value={formData.rate} onChange={e => setFormData({...formData, rate: parseFloat(e.target.value) || 0})} /></div>
-                        <div><label className="block text-sm font-medium text-muted-foreground mb-1">Category</label><Input value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} /></div>
-                        <div><label className="block text-sm font-medium text-muted-foreground mb-1">Status</label><Select value={formData.is_active} onChange={e => setFormData({...formData, is_active: e.target.value === 'true'})}><option value="true">Active</option><option value="false">Inactive</option></Select></div>
+                        <div><label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Role Name</label><Input value={formData.role} onChange={e => setFormData({...formData, role: e.target.value})} /></div>
+                        <div><label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Rate ($/hr)</label><Input type="number" value={formData.rate} onChange={e => setFormData({...formData, rate: parseFloat(e.target.value) || 0})} /></div>
+                        <div><label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Cost Rate ($/hr)</label><Input type="number" value={formData.cost_rate} onChange={e => setFormData({...formData, cost_rate: parseFloat(e.target.value) || 0})} /></div>
+                        <div><label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Description</label><Textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} /></div>
+                        <div><label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Location</label><Input value={formData.location} onChange={e => setFormData({...formData, location: e.target.value})} /></div>
+                        <div><label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Status</label><Select value={formData.is_active} onChange={e => setFormData({...formData, is_active: e.target.value === 'true'})}><option value="true">Active</option><option value="false">Inactive</option></Select></div>
                         <div className="flex justify-end gap-4 pt-4"><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant="primary" onClick={handleSave}>Save Changes</Button></div>
                     </div>
                 </Modal>
@@ -1042,14 +1169,16 @@
         };
         
         const AddCatalogRoleModal = ({ isOpen, onClose, onSave }) => {
-            const [formData, setFormData] = useState({ name: '', rate: 0, category: 'General', is_active: true });
+            const [formData, setFormData] = useState({ role: '', rate: 0, cost_rate: 0, location: 'Global', description: '', is_active: true });
             const handleSave = () => onSave(formData);
             return (
                 <Modal isOpen={isOpen} onClose={onClose} title="Add New Role">
                     <div className="space-y-4">
-                        <div><label className="block text-sm font-medium text-muted-foreground mb-1">Role Name</label><Input value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} /></div>
-                        <div><label className="block text-sm font-medium text-muted-foreground mb-1">Base Rate ($/hr)</label><Input type="number" value={formData.rate} onChange={e => setFormData({...formData, rate: parseFloat(e.target.value) || 0})} /></div>
-                        <div><label className="block text-sm font-medium text-muted-foreground mb-1">Category</label><Input value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} /></div>
+                        <div><label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Role Name</label><Input value={formData.role} onChange={e => setFormData({...formData, role: e.target.value})} /></div>
+                        <div><label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Rate ($/hr)</label><Input type="number" value={formData.rate} onChange={e => setFormData({...formData, rate: parseFloat(e.target.value) || 0})} /></div>
+                        <div><label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Cost Rate ($/hr)</label><Input type="number" value={formData.cost_rate} onChange={e => setFormData({...formData, cost_rate: parseFloat(e.target.value) || 0})} /></div>
+                        <div><label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Description</label><Textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} /></div>
+                        <div><label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Location</label><Input value={formData.location} onChange={e => setFormData({...formData, location: e.target.value})} /></div>
                         <div className="flex justify-end gap-4 pt-4"><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant="primary" onClick={handleSave}>Add Role</Button></div>
                     </div>
                 </Modal>
@@ -1068,9 +1197,9 @@
             return (
                 <Modal isOpen={isOpen} onClose={onClose} title={`Share "${project.name}"`}>
                     <div className="space-y-4">
-                        <p className="text-sm text-muted-foreground">Enter the email of the user you want to share this project with.</p>
-                        <div><label className="block text-sm font-medium text-muted-foreground mb-1">Email</label><Input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="colleague@example.com" /></div>
-                        <div><label className="block text-sm font-medium text-muted-foreground mb-1">Permission</label><Select value={permission} onChange={e => setPermission(e.target.value)}><option value="view">Can view</option><option value="edit">Can edit</option></Select></div>
+                        <p className="text-sm text-gray-500 dark:text-gray-400">Enter the email of the user you want to share this project with.</p>
+                        <div><label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Email</label><Input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="colleague@example.com" /></div>
+                        <div><label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Permission</label><Select value={permission} onChange={e => setPermission(e.target.value)}><option value="view">Can view</option><option value="edit">Can edit</option></Select></div>
                         <div className="flex justify-end gap-4 pt-4"><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant="primary" onClick={handleShare}>Share Project</Button></div>
                     </div>
                 </Modal>
@@ -1099,15 +1228,20 @@
             return (
                 <Modal isOpen={isOpen} onClose={onClose} title="Edit Project Settings">
                     <div className="space-y-4">
-                        <div><label className="block text-sm font-medium text-muted-foreground mb-1">Project Name</label><Input value={currentName} onChange={e => setCurrentName(e.target.value)} /></div>
-                        <div><label className="block text-sm font-medium text-muted-foreground mb-1">Description</label><Textarea value={currentDesc} onChange={e => setCurrentDesc(e.target.value)} rows={3} /></div>
+                        <div><label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Project Name</label><Input value={currentName} onChange={e => setCurrentName(e.target.value)} /></div>
+                        <div><label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Description</label><Textarea value={currentDesc} onChange={e => setCurrentDesc(e.target.value)} rows={3} /></div>
                         <div className="grid grid-cols-2 gap-4">
-                            <div><label className="block text-sm font-medium text-muted-foreground mb-1">Duration (Months)</label><Input type="number" value={currentSettings.duration} onChange={e => handleChange('duration', parseInt(e.target.value) || 1)} /></div>
-                            <div><label className="block text-sm font-medium text-muted-foreground mb-1">Monthly Hours</label><Input type="number" value={currentSettings.workingHours} onChange={e => handleChange('workingHours', parseInt(e.target.value) || 0)} /></div>
-                            <div><label className="block text-sm font-medium text-muted-foreground mb-1">Tax Rate (%)</label><Input type="number" value={currentSettings.taxRate} onChange={e => handleChange('taxRate', parseFloat(e.target.value) || 0)} /></div>
-                            <div><label className="block text-sm font-medium text-muted-foreground mb-1">Risk Buffer (%)</label><Input type="number" value={currentSettings.riskBuffer} onChange={e => handleChange('riskBuffer', parseFloat(e.target.value) || 0)} /></div>
-                            <div><label className="block text-sm font-medium text-muted-foreground mb-1">Profit Margin (%)</label><Input type="number" value={currentSettings.profitMargin} onChange={e => handleChange('profitMargin', parseFloat(e.target.value) || 0)} /></div>
-                            <div><label className="block text-sm font-medium text-muted-foreground mb-1">Tax Included</label><Select value={currentSettings.includesTax} onChange={e => handleChange('includesTax', e.target.value === 'true')}><option value="true">Yes</option><option value="false">No</option></Select></div>
+                            <div><label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Duration (months)</label><Input type="number" value={currentSettings.duration} onChange={e => handleChange('duration', parseInt(e.target.value) || 1)} /></div>
+                            <div><label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Monthly Hours</label><Input type="number" value={currentSettings.workingHours} onChange={e => handleChange('workingHours', parseInt(e.target.value) || 0)} /></div>
+                            <div><label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Tax Rate (%)</label><Input type="number" value={currentSettings.taxRate} onChange={e => handleChange('taxRate', parseFloat(e.target.value) || 0)} /></div>
+                            <div><label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Risk Buffer (%)</label><Input type="number" value={currentSettings.riskBuffer} onChange={e => handleChange('riskBuffer', parseFloat(e.target.value) || 0)} /></div>
+                            <div><label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Profit Margin (%)</label><Input type="number" value={currentSettings.profitMargin} onChange={e => handleChange('profitMargin', parseFloat(e.target.value) || 0)} /></div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Currency</label>
+                                <Select value={currentSettings.currency} onChange={e => handleChange('currency', e.target.value)}>
+                                    {SUPPORTED_CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                                </Select>
+                            </div>
                         </div>
                         <div className="flex justify-end gap-4 pt-4"><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant="primary" onClick={handleSave}>Save Changes</Button></div>
                     </div>
@@ -1115,6 +1249,59 @@
             );
         };
         
+        const RolesPage = () => {
+            const [roles, setRoles] = useState([]);
+            const [isLoading, setIsLoading] = useState(true);
+            const { addToast } = useToast();
+
+            useEffect(() => {
+                const fetchRoles = async () => {
+                    if (!supabase) return;
+                    setIsLoading(true);
+                    const { data, error } = await supabase.from('role_catalog').select('*');
+                    if (error) {
+                        addToast('Error fetching roles: ' + error.message, 'error');
+                    } else {
+                        setRoles(data);
+                    }
+                    setIsLoading(false);
+                };
+                fetchRoles();
+            }, [addToast]);
+
+            return (
+                <PageWrapper title="Role Catalog">
+                    <Card>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm text-left">
+                                <thead className="text-xs text-gray-500 dark:text-gray-400 uppercase bg-gray-50 dark:bg-gray-700/50">
+                                    <tr>
+                                        <th className="px-6 py-3">Role</th>
+                                        <th className="px-6 py-3">Rate</th>
+                                        <th className="px-6 py-3">Cost Rate</th>
+                                        <th className="px-6 py-3">Location</th>
+                                        <th className="px-6 py-3">Description</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                                    {isLoading ? (<tr><td colSpan="5" className="text-center p-4">Loading...</td></tr>) : 
+                                    roles.map(role => (
+                                        <tr key={role.id}>
+                                            <td className="px-6 py-4 font-medium">{role.role}</td>
+                                            <td className="px-6 py-4">${role.rate}</td>
+                                            <td className="px-6 py-4">${role.cost_rate}</td>
+                                            <td className="px-6 py-4">{role.location}</td>
+                                            <td className="px-6 py-4 text-gray-500 dark:text-gray-400">{role.description}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </Card>
+                </PageWrapper>
+            );
+        };
+
         // --- ROOT APP COMPONENT ---
         const App = () => {
             const { user, profile, loading } = useAuth();
@@ -1137,6 +1324,7 @@
                 switch (currentPage) {
                     case 'home': return <HomePage projectToLoad={projectToLoad} clearProjectToLoad={() => setProjectToLoad(null)} templateToLoad={templateToLoad} clearTemplateToLoad={() => setTemplateToLoad(null)} />;
                     case 'projects': return <ProjectsPage loadProject={handleLoadProject} loadTemplate={handleLoadTemplate} />;
+                    case 'roles': return <RolesPage />;
                     case 'admin': return <AdminPage />;
                     case 'profile': return <ProfilePage />;
                     case 'help': return <HelpPage />;
@@ -1147,7 +1335,7 @@
             };
 
             if (loading) {
-                return <div className="flex items-center justify-center h-screen bg-background"><div className="text-xl font-semibold text-foreground/80">Loading...</div></div>;
+                return <div className="flex items-center justify-center h-screen bg-gray-100 dark:bg-gray-900"><div className="text-xl font-semibold text-gray-800 dark:text-gray-200">Učitavanje...</div></div>;
             }
             
             if (!user) {
@@ -1155,11 +1343,11 @@
             }
 
             return (
-                <div className="flex h-screen bg-background text-foreground">
+                <div className="flex h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
                     <Sidebar isSidebarOpen={isSidebarOpen} setSidebarOpen={setSidebarOpen} setCurrentPage={setCurrentPage} />
                     <div className="flex-1 flex flex-col overflow-hidden md:ml-64">
                         <Header setSidebarOpen={setSidebarOpen} />
-                        <main className="flex-1 overflow-x-hidden overflow-y-auto bg-background">
+                        <main className="flex-1 overflow-x-hidden overflow-y-auto">
                            {renderPage()}
                         </main>
                     </div>

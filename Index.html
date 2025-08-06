@@ -343,7 +343,7 @@
                     if (!supabase) return;
                     const { data, error } = await supabase.from('role_catalog').select('*').eq('is_active', true);
                     if (error) addToast('Could not fetch role catalog.', 'error');
-                    else setRoleCatalog(data);
+                    else setRoleCatalog(data || []);
                 };
                 fetchRoleCatalog();
             }, [addToast]);
@@ -353,7 +353,7 @@
                     setProjectName(projectToLoad.name);
                     setSettings(projectToLoad.settings);
                     setTeam(projectToLoad.team || []);
-                    setProjectDescription(projectToLoad.description || '');
+                    setProjectDescription(projectToLoad.settings?.description || '');
                     addToast(`Loaded project: ${projectToLoad.name}`, 'info');
                     clearProjectToLoad();
                 }
@@ -478,7 +478,6 @@
                     settings: {...settings, description: projectDescription},
                     team: team,
                     is_template: isTemplate,
-                    description: projectDescription,
                 };
                 
                 const { error } = await supabase.from(table).insert([projectData]);
@@ -1262,7 +1261,7 @@
                     if (error) {
                         addToast('Error fetching roles: ' + error.message, 'error');
                     } else {
-                        setRoles(data);
+                        setRoles(data || []);
                     }
                     setIsLoading(false);
                 };
@@ -1335,7 +1334,7 @@
             };
 
             if (loading) {
-                return <div className="flex items-center justify-center h-screen bg-gray-100 dark:bg-gray-900"><div className="text-xl font-semibold text-gray-800 dark:text-gray-200">Učitavanje...</div></div>;
+                return <div className="flex items-center justify-center h-screen bg-gray-100 dark:bg-gray-900"><div className="text-xl font-semibold text-gray-800 dark:text-gray-200">Loading...</div></div>;
             }
             
             if (!user) {
